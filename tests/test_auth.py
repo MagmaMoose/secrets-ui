@@ -28,7 +28,7 @@ def test_sign_in_keeps_only_the_vaults_the_pattern_allows(client, world):
     assert me["stores"][0]["location"] == "https://team-a-kv-dev.vault.azure.net"
     assert me["stores"][0]["label"] == "team-a-kv-dev"
     (provider,) = me["providers"]
-    assert provider["id"] == "azure-keyvault" and set(provider["features"]) == {"content_type", "enable", "expiry", "recover"}
+    assert provider["id"] == "azure-keyvault" and set(provider["features"]) == {"content_type", "enable", "expiry", "recover", "versions"}
     assert me["name"] == "Ada Lovelace"
     assert len(me["csrf"]) >= 32
 

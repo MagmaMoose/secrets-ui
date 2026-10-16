@@ -18,7 +18,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
-from . import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, Provider, ProviderError
+from . import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, VERSIONS, Provider, ProviderError
 
 API_VERSION = "7.5"
 _MAX_PAGES = 40  # 1000 secrets at Key Vault's 25 per page
@@ -26,6 +26,7 @@ _MAX_PAGES = 40  # 1000 secrets at Key Vault's 25 per page
 # letter and ending with a letter or digit. Lowercase only, so one vault has one name.
 _VAULT_NAME = re.compile(r"^[a-z](?:[a-z0-9]|-(?!-))*[a-z0-9]$")
 _NAME_RULE = r"^[0-9a-zA-Z-]{1,127}$"
+_VERSION = re.compile(r"^[0-9a-f]{32}$")
 
 
 def is_vault_name(value: str) -> bool:
@@ -69,7 +70,7 @@ def _item(item: dict[str, Any]) -> dict[str, Any]:
 class AzureKeyVault(Provider):
     id = "azure-keyvault"
     label = "Azure Key Vault"
-    features = frozenset({EXPIRY, ENABLE, CONTENT_TYPE, RECOVER})
+    features = frozenset({EXPIRY, ENABLE, CONTENT_TYPE, RECOVER, VERSIONS})
     name_pattern = _NAME_RULE
     name_hint = "Letters, digits and hyphens, up to 127."
 
@@ -120,8 +121,8 @@ class AzureKeyVault(Provider):
     def _url(self, vault: str, *segments: str) -> str:
         return f"https://{self._host(vault)}/" + "/".join(quote(s, safe="") for s in segments)
 
-    async def _pages(self, vault: str, token: str, collection: str) -> list[dict[str, Any]]:
-        url = self._url(vault, collection) + f"?api-version={API_VERSION}&maxresults=25"
+    async def _pages(self, vault: str, token: str, *collection: str) -> list[dict[str, Any]]:
+        url = self._url(vault, *collection) + f"?api-version={API_VERSION}&maxresults=25"
         items: list[dict[str, Any]] = []
         for _ in range(_MAX_PAGES):
             body = await self._call("GET", url, token)
@@ -147,11 +148,32 @@ class AzureKeyVault(Provider):
             items.append(item)
         return sorted(items, key=lambda s: s["name"].lower())
 
-    async def get_value(self, store: str, name: str, token: str) -> str:
+    async def get_value(self, store: str, name: str, token: str, version: str = "") -> str:
         self._check(name)
-        # The trailing empty segment is the latest version, as the Key Vault SDKs ask for it.
-        body = await self._call("GET", self._url(store, "secrets", name, ""), token)
+        if version and not _VERSION.match(version):
+            raise ProviderError(400, "invalid_version", "Not a Key Vault secret version.")
+        # An empty last segment is the latest version, as the Key Vault SDKs ask for it.
+        body = await self._call("GET", self._url(store, "secrets", name, version), token)
         return str(body.get("value", ""))
+
+    async def list_versions(self, store: str, name: str, token: str) -> list[dict[str, Any]]:
+        self._check(name)
+        versions = []
+        for raw in await self._pages(store, token, "secrets", name, "versions"):
+            item = _item(raw)
+            segments = urlsplit(str(raw.get("id", ""))).path.strip("/").split("/")
+            versions.append(
+                {
+                    "version": segments[2] if len(segments) > 2 else "",
+                    "created": item["created"],
+                    "updated": item["updated"],
+                    "expires": item["expires"],
+                    "state": "enabled" if item["enabled"] else "disabled",
+                }
+            )
+        # The current version is the newest one; the list comes in no particular order.
+        versions.sort(key=lambda v: v["created"] or 0, reverse=True)
+        return [{**v, "current": i == 0} for i, v in enumerate(versions)]
 
     async def exists(self, store: str, name: str, token: str) -> bool:
         self._check(name)

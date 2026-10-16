@@ -152,6 +152,26 @@ def test_new_version_expiry_and_enable(client, world):
     assert client.patch(base, headers=write_headers(me), json={}).status_code == 400
 
 
+def test_older_versions_are_listed_newest_first_and_revealed_one_at_a_time(client, world, caplog):
+    me = sign_in(client, world)
+    base = "/api/stores/azure-keyvault/team-a-kv-dev/secrets/db-password"
+    assert client.post(f"{base}/versions", headers=write_headers(me), json={"value": "rotated"}).status_code == 201
+    versions = client.get(f"{base}/versions").json()["versions"]
+    assert [(v["current"], v["state"]) for v in versions] == [(True, "enabled"), (False, "enabled")]
+    assert all("value" not in v for v in versions)
+
+    old = versions[1]["version"]
+    assert client.post(f"{base}/reveal", json={"version": old}).status_code == 403
+    with caplog.at_level(logging.INFO):
+        response = client.post(f"{base}/reveal", headers=write_headers(me), json={"version": old})
+    assert response.status_code == 200 and response.json() == {"value": "s3cr3t-db"}
+    assert world.vault_requests()[-1].url.path == f"/secrets/db-password/{old}"
+    assert "s3cr3t" not in caplog.text and old in caplog.text
+
+    bad = client.post(f"{base}/reveal", headers=write_headers(me), json={"version": "../keys"})
+    assert bad.status_code == 400 and world.vault_requests()[-1].url.path == f"/secrets/db-password/{old}"
+
+
 def test_soft_delete_and_recover(client, world):
     me = sign_in(client, world)
     vault = world.vaults["team-a-kv-dev"]

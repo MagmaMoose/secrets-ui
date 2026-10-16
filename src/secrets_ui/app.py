@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .config import Branding, Config
 from .entra import Entra, EntraError
-from .providers import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, Provider, ProviderError
+from .providers import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, VERSIONS, Provider, ProviderError
 from .providers.azure_keyvault import AzureKeyVault
 from .session import Cookies, Sealer, TokenCache
 
@@ -88,6 +88,10 @@ class NewSecret(NewVersion):
 
 class Attributes(_Expiring):
     enabled: bool | None = None
+
+
+class Version(BaseModel):
+    version: str = Field(default="", max_length=64)
 
 
 def _log(event: str, **fields: Any) -> None:
@@ -374,12 +378,21 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         return {"name": name}
 
     @app.post(f"{base}/secrets/{{name}}/reveal")
-    async def reveal(provider: ProviderId, store: StoreName, name: SecretName, data: Writable) -> dict[str, Any]:
+    async def reveal(provider: ProviderId, store: StoreName, name: SecretName, data: Writable, body: Version | None = None) -> dict[str, Any]:
         # POST, not GET: a value never sits in a URL, a history entry or a prefetch.
         found = provider_for(provider, store, data)
-        value = await call(data, found, found.get_value, store, name)
-        _log("secret revealed", user=data.get("oid"), provider=provider, store=store, secret=name)
+        version = body.version if body else ""
+        if version:
+            require(found, VERSIONS)
+        value = await call(data, found, found.get_value, store, name, version=version)
+        _log("secret revealed", user=data.get("oid"), provider=provider, store=store, secret=name, **({"version": version} if version else {}))
         return {"value": value}
+
+    @app.get(f"{base}/secrets/{{name}}/versions")
+    async def list_versions(provider: ProviderId, store: StoreName, name: SecretName, data: Session) -> dict[str, Any]:
+        found = provider_for(provider, store, data)
+        require(found, VERSIONS)
+        return {"versions": await call(data, found, found.list_versions, store, name)}
 
     if cfg.static_dir is not None:
         app.mount("/", StaticFiles(directory=cfg.static_dir, html=True), name="frontend")
