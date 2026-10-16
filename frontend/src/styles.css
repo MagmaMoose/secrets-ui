@@ -606,6 +606,13 @@ input[aria-invalid="true"] {
   border-radius: var(--radius);
 }
 
+.file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .reveal-actions {
   display: flex;
   align-items: center;

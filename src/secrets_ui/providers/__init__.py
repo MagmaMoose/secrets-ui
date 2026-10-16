@@ -42,9 +42,19 @@ class Provider(ABC):
     # What a value is, in words, under the value field.
     value_hint: ClassVar[str] = "Stored as a new version. Up to 25 KB."
 
-    def __init__(self, labels: dict[str, str] | None = None):
+    def __init__(self, labels: dict[str, str] | None = None, secret_stores: dict[str, str] | None = None):
         # The operator's display names, {store: label}, in the order to show the stores in.
         self.labels = dict(labels or {})
+        # {store: "[<kind>/]<name>"}: the External Secrets store that reads it, for the examples.
+        self.secret_stores = dict(secret_stores or {})
+
+    def secret_store(self, store: str) -> str:
+        """The External Secrets store that reads `store`: by default a ClusterSecretStore named after it."""
+        return self.secret_stores.get(store, store)
+
+    def external_secret_source(self, store: str, name: str) -> dict[str, Any]:
+        """The `data` or `dataFrom` of an ExternalSecret that reads this secret."""
+        raise ProviderError(400, "example_not_supported", "There is no External Secrets example for this store.")
 
     def arrange(self, stores: Iterable[str]) -> list[str]:
         """The stores the operator listed first, in that order, then the rest by name."""

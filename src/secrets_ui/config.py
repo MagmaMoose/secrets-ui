@@ -22,6 +22,7 @@ _HOST = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9
 _COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
 _STORE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _VAULT_PATH = re.compile(PATH_RULE)
+_SECRET_STORE = re.compile(r"^(?:(?:ClusterSecretStore|SecretStore)/)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 _VAULT_ID = re.compile(r"^/subscriptions/[0-9a-f-]{36}/resourceGroups/[\w.()-]{1,90}/providers/Microsoft\.KeyVault/vaults/([a-z0-9-]{3,24})$", re.I)
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}  # DevSkim: ignore DS162092 - plain http is allowed on loopback, for local development
 PROVIDERS = ("azure-keyvault", "hashicorp-vault")
@@ -39,6 +40,8 @@ class AzureKeyVaultConfig:
     labels: dict[str, str] = field(default_factory=dict)
     # {vault: its Azure resource id}, for the vaults whose audit log the UI shows.
     resource_ids: dict[str, str] = field(default_factory=dict)
+    # {vault: "[<kind>/]<name>"}, the External Secrets store the examples point at.
+    secret_stores: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class HashiCorpVaultConfig:
     # {store: (mount, folder)}, in the order to show the stores in.
     stores: dict[str, tuple[str, str]]
     labels: dict[str, str] = field(default_factory=dict)
+    secret_stores: dict[str, str] = field(default_factory=dict)
     auth_mount: str = "jwt"
     auth_role: str = "secrets-ui"
     ca_file: Path | None = None
@@ -149,6 +153,8 @@ def _stores(env: dict[str, str], name: str) -> list[dict[str, Any]]:
         label = item.get("label", "")
         if not isinstance(label, str) or len(label) > 64 or not label.isprintable():
             raise ConfigError(f"{name}: the label of {item['name']} must be text of at most 64 characters")
+        if "secret_store" in item and not (isinstance(item["secret_store"], str) and _SECRET_STORE.match(item["secret_store"])):
+            raise ConfigError(f"{name}: the secret_store of {item['name']} must be a store name, or ClusterSecretStore/<name> or SecretStore/<name>")
     return items
 
 
@@ -182,6 +188,7 @@ def _hashicorp_vault(env: dict[str, str]) -> HashiCorpVaultConfig:
         address=_origin(env.get("SECRETS_UI_HASHICORP_VAULT_ADDR", ""), "SECRETS_UI_HASHICORP_VAULT_ADDR"),
         stores={s["name"]: (s["mount"], s.get("path", "")) for s in stores},
         labels={s["name"]: s.get("label") or s["name"] for s in stores},
+        secret_stores={s["name"]: s["secret_store"] for s in stores if "secret_store" in s},
         auth_mount=auth_mount,
         auth_role=auth_role,
         ca_file=Path(ca_file) if ca_file else None,
@@ -221,6 +228,7 @@ def load_config(env: dict[str, str] | None = None) -> Config:
             suffix=suffix,
             labels={s["name"]: s.get("label") or s["name"] for s in stores},
             resource_ids=resource_ids,
+            secret_stores={s["name"]: s["secret_store"] for s in stores if "secret_store" in s},
         )
 
     hashicorp_vault = None

@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .config import Branding, Config
 from .entra import Entra, EntraError
+from .examples import external_secret
 from .providers import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, VERSIONS, Provider, ProviderError
 from .providers.azure_keyvault import AzureKeyVault
 from .providers.hashicorp_vault import HashiCorpVault, VaultStore
@@ -108,7 +109,9 @@ def build_providers(cfg: Config, http: httpx.AsyncClient, vault_http: httpx.Asyn
     providers: dict[str, Provider] = {}
     if cfg.azure_keyvault is not None:
         kv = cfg.azure_keyvault
-        providers[AzureKeyVault.id] = AzureKeyVault(http, roles=kv.roles, suffix=kv.suffix, labels=kv.labels, resource_ids=kv.resource_ids)
+        providers[AzureKeyVault.id] = AzureKeyVault(
+            http, roles=kv.roles, suffix=kv.suffix, labels=kv.labels, resource_ids=kv.resource_ids, secret_stores=kv.secret_stores
+        )
     if cfg.hashicorp_vault is not None:
         hv = cfg.hashicorp_vault
         providers[HashiCorpVault.id] = HashiCorpVault(
@@ -118,6 +121,7 @@ def build_providers(cfg: Config, http: httpx.AsyncClient, vault_http: httpx.Asyn
             auth_role=hv.auth_role,
             stores={name: VaultStore(mount, path) for name, (mount, path) in hv.stores.items()},
             labels=hv.labels,
+            secret_stores=hv.secret_stores,
         )
     return providers
 
@@ -439,6 +443,13 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         found = provider_for(provider, store, data)
         require(found, VERSIONS)
         return {"versions": await call(data, found, found.list_versions, store, name)}
+
+    @app.get(f"{base}/secrets/{{name:path}}/external-secret")
+    async def external_secret_example(provider: ProviderId, store: StoreName, name: SecretName, data: Session) -> dict[str, Any]:
+        # Names only: the store is not called, and the manifests hold no value.
+        found = provider_for(provider, store, data)
+        secret_store = found.secret_store(store)
+        return {"secret_store": secret_store, "files": external_secret(name, secret_store, found.external_secret_source(store, name))}
 
     @app.post(f"{base}/secrets/{{name:path}}/restore")
     async def restore(provider: ProviderId, store: StoreName, name: SecretName, body: Restore, data: Writable) -> dict[str, Any]:

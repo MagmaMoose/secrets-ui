@@ -192,6 +192,21 @@ def test_an_older_version_is_restored_as_a_new_current_one(client, world, caplog
     assert client.post(f"{base}/restore", headers=write_headers(me), json={"version": "../x"}).json()["error"] == "invalid_version"
 
 
+def test_a_kustomize_example_points_at_the_vaults_store_and_holds_no_value(world, env):
+    listed = json.dumps([{"name": "team-b-kv-dev", "secret_store": "SecretStore/team-b"}])
+    client = make_client(world, {**env, "SECRETS_UI_AZURE_KEYVAULT_STORES": listed})
+    sign_in(client, world)
+    response = client.get("/api/stores/azure-keyvault/team-a-kv-dev/secrets/db-password/external-secret")
+    assert response.status_code == 200 and response.json()["secret_store"] == "team-a-kv-dev"
+    manifest = response.json()["files"]["externalsecret.yaml"]
+    assert "kind: ClusterSecretStore\n    name: team-a-kv-dev\n" in manifest and "secretKey: DB_PASSWORD" in manifest
+    assert "s3cr3t" not in response.text and world.vault_requests() == []
+    other = client.get("/api/stores/azure-keyvault/team-b-kv-dev/secrets/x/external-secret").json()
+    assert "kind: SecretStore\n    name: team-b\n" in other["files"]["externalsecret.yaml"]
+    assert client.get("/api/stores/azure-keyvault/privileged-kv-prd/secrets/x/external-secret").status_code == 403
+    assert client.get("/api/stores/azure-keyvault/team-a-kv-dev/secrets/bad_name/external-secret").json()["error"] == "invalid_name"
+
+
 def test_the_audit_log_is_the_vaults_own_read_with_the_persons_token(world, env):
     client = make_client(world, {**env, **WITH_AUDIT})
     me = sign_in(client, world)

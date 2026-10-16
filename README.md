@@ -16,6 +16,8 @@ What you can do in a vault:
 - reveal a value, after an explicit click, for a minute
 - list a secret's earlier versions, reveal one the same way, or make one current again
 - read the vault's own audit log: who read or changed which secret, when, and from where
+- copy a Kustomize example (an `ExternalSecret` and its `kustomization.yaml`) that reads a secret
+  into Kubernetes with the External Secrets Operator
 
 ## How it works
 
@@ -189,11 +191,11 @@ install and keeps it on upgrade (`session.existingSecret` to bring your own). Se
 | `SECRETS_UI_AZURE_KEYVAULT_ROLES` | `.+` | Pattern a role must match to count as a vault |
 | `SECRETS_UI_AZURE_KEYVAULT_SUFFIX` | `vault.azure.net` | Key Vault DNS suffix |
 | `SECRETS_UI_HASHICORP_VAULT_ADDR` | | `https://vault.example.com:8200` |
-| `SECRETS_UI_HASHICORP_VAULT_STORES` | | The stores, in the order to show them, as JSON: `[{"name": "team-a-vault-dev", "label": "team-a-dev", "mount": "secret", "path": "dev/team-a"}]`. A person sees a store when an app role is its name |
+| `SECRETS_UI_HASHICORP_VAULT_STORES` | | The stores, in the order to show them, as JSON: `[{"name": "team-a-vault-dev", "label": "team-a-dev", "mount": "secret", "path": "dev/team-a"}]`. A person sees a store when an app role is its name. `secret_store` as for Key Vault; the example expects its `path` to be the mount |
 | `SECRETS_UI_HASHICORP_VAULT_AUTH_MOUNT` | `jwt` | The JWT auth mount |
 | `SECRETS_UI_HASHICORP_VAULT_AUTH_ROLE` | `secrets-ui` | The role on that mount |
 | `SECRETS_UI_HASHICORP_VAULT_CA_FILE` | | PEM bundle of a private CA, trusted for the calls to Vault only |
-| `SECRETS_UI_AZURE_KEYVAULT_STORES` | | How vaults show, as JSON: `[{"name": "team-a-keyvault-dev", "label": "team-a-dev", "resource_id": "/subscriptions/…/vaults/team-a-keyvault-dev"}]`. Listed vaults come first, in this order, under their label; the rest follow by name. A `resource_id` shows the vault's audit log. It grants nothing |
+| `SECRETS_UI_AZURE_KEYVAULT_STORES` | | How vaults show, as JSON: `[{"name": "team-a-keyvault-dev", "label": "team-a-dev", "resource_id": "/subscriptions/…/vaults/team-a-keyvault-dev"}]`. Listed vaults come first, in this order, under their label; the rest follow by name. A `resource_id` shows the vault's audit log; `secret_store` names the External Secrets store the Kustomize example uses (default: a `ClusterSecretStore` named after the vault, or `SecretStore/<name>`). It grants nothing |
 
 ## Develop
 

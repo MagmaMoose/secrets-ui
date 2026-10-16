@@ -24,6 +24,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
+from ..examples import env_key
 from . import AUDIT, CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, VERSIONS, Provider, ProviderError
 
 API_VERSION = "7.5"
@@ -125,8 +126,9 @@ class AzureKeyVault(Provider):
         suffix: str,
         labels: dict[str, str] | None = None,
         resource_ids: dict[str, str] | None = None,
+        secret_stores: dict[str, str] | None = None,
     ):
-        super().__init__(labels)
+        super().__init__(labels, secret_stores)
         self._http = http
         self._roles = roles
         self._suffix = suffix
@@ -155,6 +157,10 @@ class AzureKeyVault(Provider):
     def _check(self, name: str) -> None:
         if not re.fullmatch(_NAME_RULE, name):
             raise ProviderError(400, "invalid_name", f"Not a Key Vault secret name. {self.name_hint}")
+
+    def external_secret_source(self, store: str, name: str) -> dict[str, Any]:
+        self._check(name)
+        return {"data": [{"secretKey": env_key(name), "remoteRef": {"key": name}}]}
 
     async def _call(self, method: str, url: str, token: str, *, json: Any = None, params: dict[str, str] | None = None) -> Any:
         try:

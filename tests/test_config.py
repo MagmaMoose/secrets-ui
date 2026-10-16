@@ -44,7 +44,7 @@ def test_store_labels_keep_the_listed_order(env):
 
 @pytest.mark.parametrize(
     "stores",
-    ["[{", '{"name": "a-kv"}', '[{"label": "A"}]', '[{"name": ""}]', '[{"name": "a-kv"}, {"name": "a-kv"}]', '[{"name": "a-kv", "label": 1}]', '[{"name": "a-kv", "label": "a\\nb"}]'],
+    ["[{", '{"name": "a-kv"}', '[{"label": "A"}]', '[{"name": "a-kv", "secret_store": "Bad Store"}]', '[{"name": "a-kv", "secret_store": "Pod/x"}]', '[{"name": ""}]', '[{"name": "a-kv"}, {"name": "a-kv"}]', '[{"name": "a-kv", "label": 1}]', '[{"name": "a-kv", "label": "a\\nb"}]'],
 )
 def test_a_broken_store_list_fails_startup(env, stores):
     with pytest.raises(ConfigError, match="SECRETS_UI_AZURE_KEYVAULT_STORES"):

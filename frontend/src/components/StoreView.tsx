@@ -3,6 +3,7 @@ import { api, ApiError, type AuditEvent, type DeletedSecret, type Feature, type 
 import { expiryState, fromNow, when } from "../format";
 import { Confirm } from "./Dialog";
 import { ExpiryForm } from "./ExpiryForm";
+import { KustomizeExample } from "./KustomizeExample";
 import { Menu, type MenuItem } from "./Menu";
 import { Reveal } from "./Reveal";
 import { SecretForm } from "./SecretForm";
@@ -16,6 +17,7 @@ type Modal =
   | { kind: "create" }
   | { kind: "version"; secret: Secret }
   | { kind: "versions"; secret: Secret }
+  | { kind: "example"; secret: Secret }
   | { kind: "expiry"; secret: Secret }
   | { kind: "disable"; secret: Secret }
   | { kind: "delete"; secret: Secret }
@@ -120,6 +122,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
   function menu(secret: Secret): MenuItem[] {
     const items: MenuItem[] = [{ label: "New version", onSelect: () => setModal({ kind: "version", secret }) }];
     if (has("versions")) items.push({ label: "Versions", onSelect: () => setModal({ kind: "versions", secret }) });
+    items.push({ label: "Kustomize example", onSelect: () => setModal({ kind: "example", secret }) });
     if (has("expiry")) items.push({ label: "Set expiry", onSelect: () => setModal({ kind: "expiry", secret }) });
     if (has("enable")) {
       items.push({
@@ -374,6 +377,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
           }}
           onClose={() => setModal(null)}
         />}
+      {modal?.kind === "example" && <KustomizeExample store={store} name={modal.secret.name} onClose={() => setModal(null)} />}
       {modal?.kind === "expiry" && (
         <ExpiryForm
           secret={modal.secret}

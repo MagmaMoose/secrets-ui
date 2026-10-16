@@ -63,6 +63,9 @@ providers:
     #  - name: team-a-keyvault-dev
     #    label: team-a-dev
     #    resource_id: /subscriptions/<id>/resourceGroups/<group>/providers/Microsoft.KeyVault/vaults/team-a-keyvault-dev
+    #    # The External Secrets store the Kustomize example uses; default: a ClusterSecretStore
+    #    # named after the vault. SecretStore/<name> for a namespaced one.
+    #    secret_store: team-a-keyvault-dev
   hashicorpVault:
     enabled: false
     # Where Vault listens, such as https://vault.example.com:8200.
@@ -81,6 +84,7 @@ providers:
     #    label: team-a-dev
     #    mount: secret
     #    path: dev/team-a
+    #    secret_store: vault
 
 session:
   # A Secret holding the key that seals session cookies (at least 32 characters), shared by
