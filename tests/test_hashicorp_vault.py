@@ -151,6 +151,15 @@ def test_a_kustomize_example_extracts_every_key_by_its_path_in_the_mount(vclient
     assert vault_requests(world) == []
 
 
+def test_a_vault_store_removed_from_the_configuration_closes_for_signed_in_people(vclient, world, vault_env):
+    sign_in(vclient, world)
+    other = make_client(world, {**vault_env, "SECRETS_UI_HASHICORP_VAULT_STORES": json.dumps(STORES[1:])})
+    other.cookies = vclient.cookies
+    me = other.get("/api/me")
+    assert me.status_code == 200 and [s["name"] for s in me.json()["stores"] if s["provider"] == "hashicorp-vault"] == []
+    assert other.get(f"{BASE}/secrets").json()["error"] == "store_not_allowed"
+
+
 def test_attributes_vault_does_not_have_are_refused(vclient, world):
     me = sign_in(vclient, world)
     response = vclient.patch(f"{BASE}/secrets/db", headers=write_headers(me), json={"enabled": False})

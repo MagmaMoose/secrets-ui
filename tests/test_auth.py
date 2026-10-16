@@ -40,6 +40,14 @@ def test_listed_stores_come_first_in_their_order_under_their_label(world, env):
     assert [(s["name"], s["label"]) for s in me["stores"]] == [("team-b-kv-dev", "Team B dev"), ("team-a-kv-dev", "team-a-kv-dev")]
 
 
+def test_a_store_the_configuration_no_longer_allows_closes_for_signed_in_people(client, world, env):
+    sign_in(client, world)
+    narrowed = make_client(world, {**env, "SECRETS_UI_AZURE_KEYVAULT_ROLES": "^team-a-kv-dev$"})
+    narrowed.cookies = client.cookies
+    assert [s["name"] for s in narrowed.get("/api/me").json()["stores"]] == ["team-a-kv-dev"]
+    assert narrowed.get("/api/stores/azure-keyvault/team-b-kv-dev/secrets").json()["error"] == "store_not_allowed"
+
+
 def test_the_code_is_redeemed_with_the_workload_identity_token_and_the_pkce_verifier(client, world):
     sign_in(client, world)
     form = world.entra.token_requests[0]
