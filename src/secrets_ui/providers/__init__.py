@@ -19,6 +19,7 @@ EXPIRY = "expiry"
 ENABLE = "enable"
 CONTENT_TYPE = "content_type"
 RECOVER = "recover"
+VERSIONS = "versions"
 
 
 class ProviderError(Exception):
@@ -72,7 +73,13 @@ class Provider(ABC):
     async def list_deleted(self, store: str, token: str) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    async def get_value(self, store: str, name: str, token: str) -> str: ...
+    async def get_value(self, store: str, name: str, token: str, version: str = "") -> str:
+        """The current value, or that of `version`."""
+
+    async def list_versions(self, store: str, name: str, token: str) -> list[dict[str, Any]]:
+        """Every version, newest first: version, created, updated, expires, state (enabled, disabled,
+        deleted or destroyed) and current."""
+        raise ProviderError(400, "versions_not_supported", "This store keeps no versions.")
 
     @abstractmethod
     async def exists(self, store: str, name: str, token: str) -> bool: ...

@@ -3,7 +3,7 @@
 // A store is one place secrets live (an Azure key vault, later a HashiCorp Vault mount); its
 // provider's features say which controls apply.
 
-export type Feature = "expiry" | "enable" | "content_type" | "recover";
+export type Feature = "expiry" | "enable" | "content_type" | "recover" | "versions";
 
 export type ProviderInfo = { id: string; label: string; features: Feature[]; name_pattern: string; name_hint: string };
 
@@ -33,6 +33,15 @@ export type Secret = {
 };
 
 export type DeletedSecret = Secret & { deleted: number | null; purge_at: number | null };
+
+export type SecretVersion = {
+  version: string;
+  created: number | null;
+  updated: number | null;
+  expires: number | null;
+  state: "enabled" | "disabled" | "deleted" | "destroyed";
+  current: boolean;
+};
 
 export class ApiError extends Error {
   constructor(
@@ -103,4 +112,7 @@ export const api = {
   remove: (store: Store, name: string) => request<unknown>("DELETE", one(store, name)),
   recover: (store: Store, name: string) => request<unknown>("POST", `${at(store)}/deleted/${encodeURIComponent(name)}/recover`),
   reveal: (store: Store, name: string) => request<{ value: string }>("POST", `${one(store, name)}/reveal`).then((r) => r.value),
+  versions: (store: Store, name: string) => request<{ versions: SecretVersion[] }>("GET", `${one(store, name)}/versions`).then((r) => r.versions),
+  revealVersion: (store: Store, name: string, version: string) =>
+    request<{ value: string }>("POST", `${one(store, name)}/reveal`, { version }).then((r) => r.value),
 };

@@ -6,12 +6,14 @@ import { ExpiryForm } from "./ExpiryForm";
 import { Menu, type MenuItem } from "./Menu";
 import { Reveal } from "./Reveal";
 import { SecretForm } from "./SecretForm";
+import { Versions } from "./Versions";
 
 type Notify = (message: string, kind?: "info" | "error") => void;
 
 type Modal =
   | { kind: "create" }
   | { kind: "version"; secret: Secret }
+  | { kind: "versions"; secret: Secret }
   | { kind: "expiry"; secret: Secret }
   | { kind: "disable"; secret: Secret }
   | { kind: "delete"; secret: Secret }
@@ -106,6 +108,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
 
   function menu(secret: Secret): MenuItem[] {
     const items: MenuItem[] = [{ label: "New version", onSelect: () => setModal({ kind: "version", secret }) }];
+    if (has("versions")) items.push({ label: "Versions", onSelect: () => setModal({ kind: "versions", secret }) });
     if (has("expiry")) items.push({ label: "Set expiry", onSelect: () => setModal({ kind: "expiry", secret }) });
     if (has("enable")) {
       items.push({
@@ -296,6 +299,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
           onClose={() => setModal(null)}
         />
       )}
+      {modal?.kind === "versions" && <Versions store={store} name={modal.secret.name} expiry={has("expiry")} onClose={() => setModal(null)} />}
       {modal?.kind === "expiry" && (
         <ExpiryForm
           secret={modal.secret}

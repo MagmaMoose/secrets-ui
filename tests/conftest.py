@@ -98,7 +98,7 @@ class FakeVault:
 
     def bundle(self, host: str, name: str, secret: dict[str, Any], with_value: bool) -> dict[str, Any]:
         body = {
-            "id": f"https://{host}/secrets/{name}/v{secret['version']}",
+            "id": f"https://{host}/secrets/{name}/{secret['version']:032x}",
             "attributes": {k: secret[k] for k in ("enabled", "exp", "created", "updated") if secret.get(k) is not None},
             "contentType": secret.get("contentType"),
         }
@@ -168,6 +168,7 @@ class World:
                 return httpx.Response(409, json={"error": {"code": "Conflict", "message": f"Secret {name} is currently in a deleted but recoverable state."}})
             body = json.loads(request.content)
             old = vault.secrets.get(name, {"version": 0, "created": now})
+            history = [*old.get("history", []), {k: v for k, v in old.items() if k != "history"}] if name in vault.secrets else []
             vault.secrets[name] = {
                 "value": body["value"],
                 "contentType": body.get("contentType"),
@@ -176,6 +177,7 @@ class World:
                 "created": old["created"],
                 "updated": now,
                 "version": old["version"] + 1,
+                "history": history,
             }
             return httpx.Response(200, json=vault.bundle(host, name, vault.secrets[name], True))
         if name not in vault.secrets:
@@ -183,6 +185,15 @@ class World:
         secret = vault.secrets[name]
         if method == "GET" and len(parts) == 3 and parts[2] == "":
             return httpx.Response(200, json=vault.bundle(host, name, secret, True))
+        # Older versions were created when they were last updated; the newest one, on its update.
+        versions = [*secret.get("history", []), secret]
+        if method == "GET" and parts[2:] == ["versions"]:
+            return httpx.Response(200, json={"value": [{**vault.bundle(host, name, {**v, "created": v["updated"]}, False)} for v in versions]})
+        if method == "GET" and len(parts) == 3:
+            match = [v for v in versions if f"{v['version']:032x}" == parts[2]]
+            if not match:
+                return httpx.Response(404, json={"error": {"code": "SecretNotFound", "message": "no such version"}})
+            return httpx.Response(200, json=vault.bundle(host, name, match[0], True))
         if method == "PATCH" and len(parts) == 3 and parts[2] == "":
             body = json.loads(request.content)
             for key, value in body.get("attributes", {}).items():
