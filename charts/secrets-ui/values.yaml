@@ -98,6 +98,26 @@ providers:
     #    mount: secret
     #    path: dev/team-a
     #    secret_store: vault
+  ociVault:
+    enabled: false
+    # The region of the vaults, such as eu-amsterdam-1.
+    region: ""
+    # The identity domain that exchanges a person's ID token for an OCI session token
+    # (https://idcs-....identity.oraclecloud.com), the OAuth app there the exchange runs as, and a
+    # Secret holding that app's client secret (see the README).
+    domainUrl: ""
+    clientId: ""
+    clientSecret:
+      existingSecret: ""
+      key: client-secret
+    # One store per vault. A person sees a store when one of their roles or groups is its name.
+    stores: []
+    #  - name: team-a-oci-dev
+    #    label: team-a-dev
+    #    compartment: ocid1.compartment.oc1..<id>
+    #    vault: ocid1.vault.oc1.<region>.<id>
+    #    # The master encryption key new secrets are created with.
+    #    key: ocid1.key.oc1.<region>.<id>
 
 session:
   # A Secret holding the key that seals session cookies (at least 32 characters), shared by

@@ -23,10 +23,12 @@ _COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
 _GOOGLE_CLIENT = re.compile(r"^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$")
 _STORE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _VAULT_PATH = re.compile(PATH_RULE)
+_REGION = re.compile(r"^[a-z]+(?:-[a-z]+)+-[0-9]+$")
+_OCID = re.compile(r"^ocid1\.([a-z]+)\.[a-z0-9]+\.[a-z0-9.-]*\.[a-z0-9]+$")
 _SECRET_STORE = re.compile(r"^(?:(?:ClusterSecretStore|SecretStore)/)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 _VAULT_ID = re.compile(r"^/subscriptions/[0-9a-f-]{36}/resourceGroups/[\w.()-]{1,90}/providers/Microsoft\.KeyVault/vaults/([a-z0-9-]{3,24})$", re.I)
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}  # DevSkim: ignore DS162092 - plain http is allowed on loopback, for local development
-PROVIDERS = ("azure-keyvault", "hashicorp-vault")
+PROVIDERS = ("azure-keyvault", "hashicorp-vault", "oci-vault")
 
 
 class ConfigError(ValueError):
@@ -58,6 +60,20 @@ class HashiCorpVaultConfig:
 
 
 @dataclass(frozen=True)
+class OciVaultConfig:
+    region: str
+    # The identity domain that exchanges a person's ID token for an OCI session token, and the
+    # OAuth app there the exchange authenticates as.
+    domain: str
+    client_id: str
+    client_secret: str
+    # {store: (compartment, vault, master key)}, in the order to show the stores in.
+    stores: dict[str, tuple[str, str, str]]
+    labels: dict[str, str] = field(default_factory=dict)
+    secret_stores: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Branding:
     """Colours as #rrggbb; empty keeps the default. The dark ones fall back to the light ones."""
 
@@ -83,6 +99,7 @@ class Config:
     client_secret: str | None = None
     azure_keyvault: AzureKeyVaultConfig | None = None
     hashicorp_vault: HashiCorpVaultConfig | None = None
+    oci_vault: OciVaultConfig | None = None
     static_dir: Path | None = None
     port: int = 8080
     version: str = "dev"
@@ -200,6 +217,36 @@ def _hashicorp_vault(env: dict[str, str]) -> HashiCorpVaultConfig:
     )
 
 
+def _oci_vault(env: dict[str, str]) -> OciVaultConfig:
+    name = "SECRETS_UI_OCI_STORES"
+    stores = _stores(env, name)
+    if not stores:
+        raise ConfigError(f'{name} must list the stores, such as [{{"name": "team-a-oci-dev", "compartment": "ocid1.compartment...", "vault": "ocid1.vault...", "key": "ocid1.key..."}}]')
+    for store in stores:
+        if not _STORE_NAME.match(store["name"]):
+            raise ConfigError(f"{name}: {store['name']} must be letters, digits, dots, hyphens and underscores, as its role or group is named")
+        for key, kinds in (("compartment", ("compartment", "tenancy")), ("vault", ("vault",)), ("key", ("key",))):
+            found = _OCID.match(str(store.get(key, "")))
+            if not found or found.group(1) not in kinds:
+                raise ConfigError(f"{name}: {store['name']} needs the OCID of its {key} (ocid1.{kinds[0]}...)")
+    region = env.get("SECRETS_UI_OCI_REGION", "").strip()
+    if not _REGION.match(region):
+        raise ConfigError("SECRETS_UI_OCI_REGION must be a region identifier, such as eu-amsterdam-1")
+    client_id = env.get("SECRETS_UI_OCI_CLIENT_ID", "").strip()
+    client_secret = _secret(env, "SECRETS_UI_OCI_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise ConfigError("set SECRETS_UI_OCI_CLIENT_ID and SECRETS_UI_OCI_CLIENT_SECRET (or _FILE): the identity domain app the token exchange runs as")
+    return OciVaultConfig(
+        region=region,
+        domain=_origin(env.get("SECRETS_UI_OCI_DOMAIN_URL", ""), "SECRETS_UI_OCI_DOMAIN_URL"),
+        client_id=client_id,
+        client_secret=client_secret,
+        stores={s["name"]: (s["compartment"], s["vault"], s["key"]) for s in stores},
+        labels={s["name"]: s.get("label") or s["name"] for s in stores},
+        secret_stores={s["name"]: s["secret_store"] for s in stores if "secret_store" in s},
+    )
+
+
 def _google(env: dict[str, str]) -> dict[str, Any]:
     client_id = env.get("GOOGLE_CLIENT_ID", "").strip()
     if not _GOOGLE_CLIENT.match(client_id):
@@ -275,6 +322,7 @@ def load_config(env: dict[str, str] | None = None) -> Config:
     hashicorp_vault = None
     if "hashicorp-vault" in providers:
         hashicorp_vault = _hashicorp_vault(env)
+    oci_vault = _oci_vault(env) if "oci-vault" in providers else None
 
     try:
         hours = int(env.get("SECRETS_UI_SESSION_HOURS", "8"))
@@ -303,6 +351,7 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         **identity,
         azure_keyvault=azure_keyvault,
         hashicorp_vault=hashicorp_vault,
+        oci_vault=oci_vault,
         static_dir=Path(static) if static and Path(static).is_dir() else None,
         port=port,
         version=env.get("APP_VERSION", "dev"),

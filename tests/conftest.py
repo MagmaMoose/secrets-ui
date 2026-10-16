@@ -1,4 +1,4 @@
-"""Fake Entra ID, Google, Key Vault, Log Analytics and HashiCorp Vault behind one httpx
+"""Fake Entra ID, Google, Key Vault, Log Analytics, HashiCorp Vault and OCI behind one httpx
 MockTransport, and an app wired to them."""
 
 from __future__ import annotations
@@ -16,7 +16,9 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi.testclient import TestClient
 
 from secrets_ui.app import create_app
@@ -247,6 +249,122 @@ class FakeHashiVault:
         return httpx.Response(405, json={"errors": ["unsupported operation"]})
 
 
+OCI_DOMAIN = "idcs-test.identity.oraclecloud.com"
+OCI_VAULTS = "vaults.eu-amsterdam-1.oci.oraclecloud.com"
+OCI_BUNDLES = "secrets.vaults.eu-amsterdam-1.oci.oraclecloud.com"
+
+
+@dataclass
+class FakeOci:
+    """An identity domain that exchanges FakeEntra's ID tokens for session tokens, and one vault
+    whose API checks every request's signature against the key the exchange bound."""
+
+    idp: Any
+    # {secret id: {"name", "state", "versions": [{"content", "created", "deleted"}], "current"}}
+    secrets: dict[str, dict[str, Any]] = field(default_factory=dict)
+    sessions: dict[str, Any] = field(default_factory=dict)
+    exchanges: list[dict[str, list[str]]] = field(default_factory=list)
+    calls: list[httpx.Request] = field(default_factory=list)
+
+    def put(self, name: str, *values: str) -> str:
+        secret_id = f"ocid1.vaultsecret.oc1.eu-amsterdam-1.{len(self.secrets) + 1:04d}"
+        self.secrets[secret_id] = {"name": name, "state": "ACTIVE", "versions": [], "current": 0}
+        for value in values:
+            self.add_version(secret_id, value)
+        return secret_id
+
+    def add_version(self, secret_id: str, value: str) -> None:
+        secret = self.secrets[secret_id]
+        secret["versions"].append({"content": base64.b64encode(value.encode()).decode(), "created": "2026-10-16T10:00:00.000Z", "deleted": None})
+        secret["current"] = len(secret["versions"])
+
+    def exchange(self, request: httpx.Request) -> httpx.Response:
+        form = parse_qs(request.content.decode())
+        self.exchanges.append(form)
+        if request.headers.get("authorization") != "Basic " + base64.b64encode(b"oci-app:oci-secret").decode():
+            return httpx.Response(401, json={"error": "invalid_client"})
+        try:
+            jwt.decode(form["subject_token"][0], self.idp.key.public_key(), algorithms=["RS256"], audience=CLIENT, issuer=f"{AUTHORITY}/{TENANT}/v2.0")
+        except jwt.PyJWTError:
+            return httpx.Response(400, json={"error": "invalid_grant", "error_description": "subject token did not validate"})
+        token = jwt.encode({"exp": int(time.time()) + 3600, "sub": "ada"}, "upst-signing-key-for-tests-only-32b", algorithm="HS256")
+        self.sessions[token] = serialization.load_der_public_key(base64.b64decode(form["public_key"][0]))
+        return httpx.Response(200, json={"token": token})
+
+    def verified(self, request: httpx.Request) -> bool:
+        fields = dict(part.split("=", 1) for part in request.headers.get("authorization", "").removeprefix("Signature ").split(","))
+        fields = {k: v.strip('"') for k, v in fields.items()}
+        key = self.sessions.get(fields.get("keyId", "").removeprefix("ST$"))
+        if key is None or fields.get("algorithm") != "rsa-sha256":
+            return False
+        names = fields["headers"].split()
+        required = {"date", "(request-target)", "host"} | ({"content-length", "content-type", "x-content-sha256"} if request.method in ("POST", "PUT") else set())
+        if not required <= set(names):
+            return False
+        if "x-content-sha256" in names and request.headers["x-content-sha256"] != base64.b64encode(hashlib.sha256(request.content).digest()).decode():
+            return False
+        target = f"{request.method.lower()} {request.url.raw_path.decode()}"
+        signing = "\n".join(f"{n}: {target if n == '(request-target)' else request.headers[n]}" for n in names)
+        try:
+            key.verify(base64.b64decode(fields["signature"]), signing.encode(), padding.PKCS1v15(), hashes.SHA256())
+        except InvalidSignature:
+            return False
+        return True
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == OCI_DOMAIN:
+            return self.exchange(request) if request.url.path == "/oauth2/v1/token" else httpx.Response(404)
+        self.calls.append(request)
+        if not self.verified(request):
+            return httpx.Response(401, json={"code": "NotAuthenticated", "message": "The required information to complete authentication was not provided."})
+        parts = request.url.path.strip("/").split("/")
+        if request.url.host == OCI_BUNDLES and parts[:2] == ["20190301", "secretbundles"]:
+            secret = self.secrets[parts[2]]
+            number = int(request.url.params.get("versionNumber") or secret["current"])
+            return httpx.Response(200, json={"secretId": parts[2], "versionNumber": number, "secretBundleContent": {"contentType": "BASE64", "content": secret["versions"][number - 1]["content"]}})
+        body = json.loads(request.content) if request.content else {}
+        if parts == ["20180608", "secrets"] and request.method == "GET":
+            params = request.url.params
+            listed = [
+                {"id": sid, "secretName": s["name"], "lifecycleState": s["state"], "timeCreated": "2026-10-01T09:00:00.000Z", "timeOfDeletion": s.get("purge")}
+                for sid, s in self.secrets.items()
+                if not params.get("name") or s["name"] == params["name"]
+            ]
+            start = int(params.get("page") or 0)
+            page = listed[start : start + 1]
+            more = {"opc-next-page": str(start + 1)} if start + 1 < len(listed) else {}
+            return httpx.Response(200, json=page, headers=more)
+        if parts == ["20180608", "secrets"] and request.method == "POST":
+            secret_id = self.put(body["secretName"])
+            self.secrets[secret_id]["created_with"] = {k: body[k] for k in ("compartmentId", "vaultId", "keyId")}
+            self.secrets[secret_id]["versions"].append({"content": body["secretContent"]["content"], "created": "2026-10-16T11:00:00.000Z", "deleted": None})
+            self.secrets[secret_id]["current"] = 1
+            return httpx.Response(200, json={"id": secret_id})
+        secret = self.secrets.get(parts[2]) if len(parts) > 2 else None
+        if secret is None:
+            return httpx.Response(404, json={"code": "NotAuthorizedOrNotFound", "message": "Authorization failed or requested resource not found."})
+        if len(parts) == 3 and request.method == "PUT":
+            if "currentVersionNumber" in body:
+                secret["current"] = body["currentVersionNumber"]
+            else:
+                secret["versions"].append({"content": body["secretContent"]["content"], "created": "2026-10-16T12:00:00.000Z", "deleted": None})
+                secret["current"] = len(secret["versions"])
+            return httpx.Response(200, json={"id": parts[2]})
+        if parts[3:] == ["versions"]:
+            versions = [
+                {"versionNumber": i + 1, "stages": ["CURRENT"] if i + 1 == secret["current"] else ["PREVIOUS"], "timeCreated": v["created"], "timeOfDeletion": v["deleted"]}
+                for i, v in enumerate(secret["versions"])
+            ]
+            return httpx.Response(200, json=versions)
+        if parts[3:] == ["actions", "scheduleDeletion"]:
+            secret["state"], secret["purge"] = "PENDING_DELETION", "2026-11-15T10:00:00.000Z"
+            return httpx.Response(200)
+        if parts[3:] == ["actions", "cancelDeletion"]:
+            secret["state"], secret["purge"] = "ACTIVE", None
+            return httpx.Response(200)
+        return httpx.Response(405)
+
+
 @dataclass
 class World:
     entra: FakeEntra
@@ -256,6 +374,7 @@ class World:
     audit_rows: list[list[Any]] = field(default_factory=list)
     hashi: FakeHashiVault | None = None
     google: FakeGoogle | None = None
+    oci: FakeOci | None = None
 
     def vault_requests(self) -> list[httpx.Request]:
         return [r for r in self.requests if r.url.host.endswith(".vault.azure.net")]
@@ -277,6 +396,8 @@ class World:
             if path == "/v1/groups/-/memberships:searchDirectGroups":
                 return self.google.search_groups(request)
             return httpx.Response(404)
+        if self.oci is not None and host in (OCI_DOMAIN, OCI_VAULTS, OCI_BUNDLES):
+            return self.oci.handle(request)
         if host == "vault.example.test" and self.hashi is not None:
             return self.hashi.handle(request)
         if host == "api.loganalytics.azure.com":
@@ -370,7 +491,7 @@ class World:
 @pytest.fixture
 def world() -> World:
     return World(
-        entra=FakeEntra(roles=["team-a-kv-dev", "team-b-kv-dev", "privileged-kv-prd", "Not_A_Vault", "admin", "team-a-vault-dev"]),
+        entra=FakeEntra(roles=["team-a-kv-dev", "team-b-kv-dev", "privileged-kv-prd", "Not_A_Vault", "admin", "team-a-vault-dev", "team-a-oci-dev"]),
         vaults={
             "team-a-kv-dev": FakeVault(
                 secrets={"db-password": {"value": "s3cr3t-db", "contentType": "text/plain", "enabled": True, "exp": None, "created": 1, "updated": 2, "version": 1}}
