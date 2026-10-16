@@ -117,6 +117,12 @@ spec:
               value: {{ .Values.config.sessionHours | quote }}
             - name: SECRETS_UI_SESSION_KEY_FILE
               value: /etc/secrets-ui/session/{{ .Values.session.key }}
+            {{- range $key, $env := dict "accent" "ACCENT" "accentText" "ACCENT_TEXT" "accentDark" "ACCENT_DARK" "accentTextDark" "ACCENT_TEXT_DARK" }}
+            {{- with index $.Values.branding $key }}
+            - name: SECRETS_UI_BRAND_{{ $env }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

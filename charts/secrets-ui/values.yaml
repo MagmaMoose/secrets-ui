@@ -39,6 +39,14 @@ config:
   # How long a sign-in lasts, 1 to 24.
   sessionHours: 8
 
+# Your colours, as quoted "#rrggbb"; empty keeps the default. The accent fills buttons, links, the
+# selected store and the logo; accentText is the text on it. The dark ones default to these two.
+branding:
+  accent: ""
+  accentText: ""
+  accentDark: ""
+  accentTextDark: ""
+
 # The secret stores. Each store a person sees comes from an app role on their sign-in.
 providers:
   azureKeyVault:
