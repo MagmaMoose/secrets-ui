@@ -333,6 +333,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
           title="New secret"
           namePattern={provider.name_pattern}
           nameHint={provider.name_hint}
+          valueHint={provider.value_hint}
           features={provider.features}
           submit={(input) => api.create(store, input)}
           onDone={(name) => {
@@ -349,6 +350,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
           name={modal.secret.name}
           namePattern={provider.name_pattern}
           nameHint={provider.name_hint}
+          valueHint={provider.value_hint}
           features={provider.features}
           contentType={modal.secret.content_type}
           submit={({ value, content_type, expires }) => api.newVersion(store, modal.secret.name, { value, content_type, expires })}
@@ -361,7 +363,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
           onClose={() => setModal(null)}
         />
       )}
-      {modal?.kind === "versions" && <Versions store={store} name={modal.secret.name} expiry={has("expiry")} onClose={() => setModal(null)} />}
+      {modal?.kind === "versions" && <Versions store={store} name={modal.secret.name} expiry={has("expiry")} enable={has("enable")} onClose={() => setModal(null)} />}
       {modal?.kind === "expiry" && (
         <ExpiryForm
           secret={modal.secret}

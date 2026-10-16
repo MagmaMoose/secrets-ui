@@ -12,6 +12,18 @@ providers:
         label: Team A dev
         resource_id: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-secrets/providers/Microsoft.KeyVault/vaults/team-a-keyvault-dev
       - name: team-a-keyvault-prd
+  hashicorpVault:
+    enabled: true
+    address: https://vault.example.com:8200
+    caBundle: |
+      -----BEGIN CERTIFICATE-----
+      MIIBkTCCATegAwIBAgIUQ2kx
+      -----END CERTIFICATE-----
+    stores:
+      - name: team-a-vault-dev
+        label: Team A dev (Vault)
+        mount: secret
+        path: dev/team-a
 branding:
   accent: "#0b6e4f"
   accentText: "#ffffff"
@@ -29,6 +41,13 @@ networkPolicy:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: kube-system
+  extraEgress:
+    - to:
+        - ipBlock:
+            cidr: 10.20.0.10/32
+      ports:
+        - port: 8200
+          protocol: TCP
 priorityClassName: medium
 topologySpread:
   whenUnsatisfiable: DoNotSchedule

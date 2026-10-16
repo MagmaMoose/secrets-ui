@@ -1,7 +1,7 @@
 """Secret stores behind one interface, so the UI and the API do not care which product holds them.
 
-A provider turns a person's sign-in into the stores they may open (an Azure key vault, a
-HashiCorp Vault mount) and runs secret operations there with that person's own credential.
+A provider turns a person's sign-in into the stores they may open (an Azure key vault, a folder
+in a HashiCorp Vault KV mount) and runs secret operations there with that person's own credential.
 `features` tells the UI which controls apply: a store without expiry shows no expiry column.
 """
 
@@ -39,6 +39,8 @@ class Provider(ABC):
     # A secret name the store accepts, as a regular expression the UI also checks, and in words.
     name_pattern: ClassVar[str]
     name_hint: ClassVar[str]
+    # What a value is, in words, under the value field.
+    value_hint: ClassVar[str] = "Stored as a new version. Up to 25 KB."
 
     def __init__(self, labels: dict[str, str] | None = None):
         # The operator's display names, {store: label}, in the order to show the stores in.
@@ -122,4 +124,5 @@ class Provider(ABC):
             "features": sorted(self.features),
             "name_pattern": self.name_pattern,
             "name_hint": self.name_hint,
+            "value_hint": self.value_hint,
         }

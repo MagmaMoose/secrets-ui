@@ -9,17 +9,22 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from .providers.hashicorp_vault import PATH_RULE
+
 _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _HOST = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
 _COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
+_STORE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_VAULT_PATH = re.compile(PATH_RULE)
 _VAULT_ID = re.compile(r"^/subscriptions/[0-9a-f-]{36}/resourceGroups/[\w.()-]{1,90}/providers/Microsoft\.KeyVault/vaults/([a-z0-9-]{3,24})$", re.I)
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}  # DevSkim: ignore DS162092 - plain http is allowed on loopback, for local development
-PROVIDERS = ("azure-keyvault",)
+PROVIDERS = ("azure-keyvault", "hashicorp-vault")
 
 
 class ConfigError(ValueError):
@@ -34,6 +39,17 @@ class AzureKeyVaultConfig:
     labels: dict[str, str] = field(default_factory=dict)
     # {vault: its Azure resource id}, for the vaults whose audit log the UI shows.
     resource_ids: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class HashiCorpVaultConfig:
+    address: str
+    # {store: (mount, folder)}, in the order to show the stores in.
+    stores: dict[str, tuple[str, str]]
+    labels: dict[str, str] = field(default_factory=dict)
+    auth_mount: str = "jwt"
+    auth_role: str = "secrets-ui"
+    ca_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -57,10 +73,11 @@ class Config:
     federated_token_file: Path | None = None
     client_secret: str | None = None
     azure_keyvault: AzureKeyVaultConfig | None = None
+    hashicorp_vault: HashiCorpVaultConfig | None = None
     static_dir: Path | None = None
     port: int = 8080
     version: str = "dev"
-    providers: tuple[str, ...] = field(default=PROVIDERS)
+    providers: tuple[str, ...] = ("azure-keyvault",)
     branding: Branding = field(default_factory=Branding)
 
     @property
@@ -79,13 +96,13 @@ def _guid(env: dict[str, str], name: str) -> str:
     return value
 
 
-def _origin(value: str) -> str:
+def _origin(value: str, name: str = "SECRETS_UI_PUBLIC_ORIGIN") -> str:
     parts = urlsplit(value.strip())
     host = (parts.hostname or "").lower()
     if parts.path not in ("", "/") or parts.query or parts.fragment or parts.username or not host:
-        raise ConfigError("SECRETS_UI_PUBLIC_ORIGIN must be scheme://host[:port], with no path")
+        raise ConfigError(f"{name} must be scheme://host[:port], with no path")
     if parts.scheme != "https" and not (parts.scheme == "http" and host in _LOOPBACK):
-        raise ConfigError("SECRETS_UI_PUBLIC_ORIGIN must be https (plain http only on a loopback address)")
+        raise ConfigError(f"{name} must be https (plain http only on a loopback address)")
     return f"{parts.scheme}://{parts.netloc.lower()}"
 
 
@@ -135,6 +152,42 @@ def _stores(env: dict[str, str], name: str) -> list[dict[str, Any]]:
     return items
 
 
+def _hashicorp_vault(env: dict[str, str]) -> HashiCorpVaultConfig:
+    name = "SECRETS_UI_HASHICORP_VAULT_STORES"
+    stores = _stores(env, name)
+    if not stores:
+        raise ConfigError(f'{name} must list the stores, such as [{{"name": "team-a-vault-dev", "mount": "secret", "path": "dev/team-a"}}]')
+    for store in stores:
+        if not _STORE_NAME.match(store["name"]):
+            raise ConfigError(f"{name}: {store['name']} must be letters, digits, dots, hyphens and underscores, as its app role is named")
+        mount, path = store.get("mount"), store.get("path", "")
+        if not isinstance(mount, str) or not _VAULT_PATH.match(mount) or not isinstance(path, str) or (path and not _VAULT_PATH.match(path)):
+            raise ConfigError(f"{name}: {store['name']} needs a KV v2 mount, such as secret, and may take a folder path in it, such as dev/team-a")
+
+    auth_mount = env.get("SECRETS_UI_HASHICORP_VAULT_AUTH_MOUNT", "jwt").strip().strip("/")
+    if not _VAULT_PATH.match(auth_mount):
+        raise ConfigError("SECRETS_UI_HASHICORP_VAULT_AUTH_MOUNT must be the path of a JWT auth mount, such as jwt")
+    auth_role = env.get("SECRETS_UI_HASHICORP_VAULT_AUTH_ROLE", "secrets-ui").strip()
+    if not _STORE_NAME.match(auth_role):
+        raise ConfigError("SECRETS_UI_HASHICORP_VAULT_AUTH_ROLE must be the name of a role on that mount, such as secrets-ui")
+
+    ca_file = env.get("SECRETS_UI_HASHICORP_VAULT_CA_FILE", "").strip()
+    if ca_file:
+        try:
+            ssl.create_default_context(cafile=ca_file)
+        except (OSError, ssl.SSLError) as err:
+            raise ConfigError(f"SECRETS_UI_HASHICORP_VAULT_CA_FILE is not a readable PEM CA bundle: {err.__class__.__name__}") from err
+
+    return HashiCorpVaultConfig(
+        address=_origin(env.get("SECRETS_UI_HASHICORP_VAULT_ADDR", ""), "SECRETS_UI_HASHICORP_VAULT_ADDR"),
+        stores={s["name"]: (s["mount"], s.get("path", "")) for s in stores},
+        labels={s["name"]: s.get("label") or s["name"] for s in stores},
+        auth_mount=auth_mount,
+        auth_role=auth_role,
+        ca_file=Path(ca_file) if ca_file else None,
+    )
+
+
 def load_config(env: dict[str, str] | None = None) -> Config:
     env = dict(os.environ if env is None else env)
 
@@ -147,7 +200,7 @@ def load_config(env: dict[str, str] | None = None) -> Config:
     if len(session_key) < 32:
         raise ConfigError("SECRETS_UI_SESSION_KEY (or SECRETS_UI_SESSION_KEY_FILE) must hold at least 32 characters")
 
-    providers = tuple(p.strip() for p in env.get("SECRETS_UI_PROVIDERS", ",".join(PROVIDERS)).split(",") if p.strip())
+    providers = tuple(p.strip() for p in env.get("SECRETS_UI_PROVIDERS", "azure-keyvault").split(",") if p.strip())
     unknown = sorted(set(providers) - set(PROVIDERS))
     if unknown or not providers:
         raise ConfigError(f"SECRETS_UI_PROVIDERS takes {', '.join(PROVIDERS)}; got {', '.join(unknown) or 'none'}")
@@ -169,6 +222,10 @@ def load_config(env: dict[str, str] | None = None) -> Config:
             labels={s["name"]: s.get("label") or s["name"] for s in stores},
             resource_ids=resource_ids,
         )
+
+    hashicorp_vault = None
+    if "hashicorp-vault" in providers:
+        hashicorp_vault = _hashicorp_vault(env)
 
     try:
         hours = int(env.get("SECRETS_UI_SESSION_HOURS", "8"))
@@ -199,6 +256,7 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         federated_token_file=Path(token_file) if token_file else None,
         client_secret=secret or None,
         azure_keyvault=azure_keyvault,
+        hashicorp_vault=hashicorp_vault,
         static_dir=Path(static) if static and Path(static).is_dir() else None,
         port=port,
         version=env.get("APP_VERSION", "dev"),

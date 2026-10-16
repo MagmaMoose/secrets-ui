@@ -145,6 +145,14 @@ class Entra:
             raise EntraError("Microsoft returned no access token", status=401)
         return str(body["access_token"]), time.time() + int(body.get("expires_in") or 3600)
 
+    async def id_token(self, refresh_token: str) -> tuple[str, float]:
+        """A fresh ID token from a session's refresh token, for a store that signs people in with it
+        (HashiCorp Vault's JWT auth): audience this app, the person's roles in it."""
+        body = await self._redeem({"grant_type": "refresh_token", "refresh_token": refresh_token, "scope": "openid profile offline_access"})
+        if not body.get("id_token"):
+            raise EntraError("Microsoft returned no ID token", status=401)
+        return str(body["id_token"]), time.time() + int(body.get("expires_in") or 3600)
+
     async def _signing_key(self, kid: str) -> jwt.PyJWK:
         now = time.monotonic()
         stale = now - self._keys_at > _JWKS_TTL

@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import secrets
+import ssl
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated, Any
@@ -26,6 +27,7 @@ from .config import Branding, Config
 from .entra import Entra, EntraError
 from .providers import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, VERSIONS, Provider, ProviderError
 from .providers.azure_keyvault import AzureKeyVault
+from .providers.hashicorp_vault import HashiCorpVault, VaultStore
 from .session import Cookies, Sealer, TokenCache
 
 log = logging.getLogger("secrets_ui")
@@ -98,17 +100,30 @@ def _log(event: str, **fields: Any) -> None:
     log.info(json.dumps({"msg": event, **fields}))
 
 
-def build_providers(cfg: Config, http: httpx.AsyncClient) -> dict[str, Provider]:
+def build_providers(cfg: Config, http: httpx.AsyncClient, vault_http: httpx.AsyncClient | None = None) -> dict[str, Provider]:
     providers: dict[str, Provider] = {}
     if cfg.azure_keyvault is not None:
         kv = cfg.azure_keyvault
         providers[AzureKeyVault.id] = AzureKeyVault(http, roles=kv.roles, suffix=kv.suffix, labels=kv.labels, resource_ids=kv.resource_ids)
+    if cfg.hashicorp_vault is not None:
+        hv = cfg.hashicorp_vault
+        providers[HashiCorpVault.id] = HashiCorpVault(
+            vault_http or http,
+            address=hv.address,
+            auth_mount=hv.auth_mount,
+            auth_role=hv.auth_role,
+            stores={name: VaultStore(mount, path) for name, (mount, path) in hv.stores.items()},
+            labels=hv.labels,
+        )
     return providers
 
 
 def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
     http = httpx.AsyncClient(transport=transport, follow_redirects=False)
-    providers = build_providers(cfg, http)
+    # A Vault behind a private CA gets a client of its own: only calls to Vault trust that CA.
+    ca_file = cfg.hashicorp_vault.ca_file if cfg.hashicorp_vault else None
+    vault_http = httpx.AsyncClient(transport=transport, verify=ssl.create_default_context(cafile=ca_file), follow_redirects=False) if ca_file else http
+    providers = build_providers(cfg, http, vault_http)
     # Entra ID issues a token for one resource per request: the first provider that needs one
     # gets it at sign-in, the rest redeem the refresh token when they are first used.
     first = next((p for p in providers.values() if p.sign_in_scope), None)
@@ -120,6 +135,8 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
     async def lifespan(_: FastAPI):
         yield
         await http.aclose()
+        if vault_http is not http:
+            await vault_http.aclose()
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -348,7 +365,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         _log("secret created", user=data.get("oid"), provider=provider, store=store, secret=body.name)
         return {"name": body.name}
 
-    @app.post(f"{base}/secrets/{{name}}/versions", status_code=201)
+    @app.post(f"{base}/secrets/{{name:path}}/versions", status_code=201)
     async def new_version(provider: ProviderId, store: StoreName, name: SecretName, body: NewVersion, data: Writable) -> dict[str, Any]:
         found = provider_for(provider, store, data)
         _check_fields(found, body)
@@ -356,7 +373,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         _log("secret version added", user=data.get("oid"), provider=provider, store=store, secret=name)
         return {"name": name}
 
-    @app.patch(f"{base}/secrets/{{name}}")
+    @app.patch(f"{base}/secrets/{{name:path}}")
     async def update(provider: ProviderId, store: StoreName, name: SecretName, body: Attributes, data: Writable) -> dict[str, Any]:
         found = provider_for(provider, store, data)
         changes: dict[str, Any] = {}
@@ -375,14 +392,14 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         _log("secret updated", user=data.get("oid"), provider=provider, store=store, secret=name, fields=sorted(changes))
         return {"secret": item}
 
-    @app.delete(f"{base}/secrets/{{name}}")
+    @app.delete(f"{base}/secrets/{{name:path}}")
     async def delete(provider: ProviderId, store: StoreName, name: SecretName, data: Writable) -> dict[str, Any]:
         found = provider_for(provider, store, data)
         await call(data, found, found.delete, store, name)
         _log("secret deleted", user=data.get("oid"), provider=provider, store=store, secret=name)
         return {"name": name}
 
-    @app.post(f"{base}/deleted/{{name}}/recover")
+    @app.post(f"{base}/deleted/{{name:path}}/recover")
     async def recover(provider: ProviderId, store: StoreName, name: SecretName, data: Writable) -> dict[str, Any]:
         found = provider_for(provider, store, data)
         require(found, RECOVER)
@@ -390,7 +407,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         _log("secret recovered", user=data.get("oid"), provider=provider, store=store, secret=name)
         return {"name": name}
 
-    @app.post(f"{base}/secrets/{{name}}/reveal")
+    @app.post(f"{base}/secrets/{{name:path}}/reveal")
     async def reveal(provider: ProviderId, store: StoreName, name: SecretName, data: Writable, body: Version | None = None) -> dict[str, Any]:
         # POST, not GET: a value never sits in a URL, a history entry or a prefetch.
         found = provider_for(provider, store, data)
@@ -413,7 +430,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
                 raise
         return {"events": await found.audit(store, await audit_token(data, found, fresh=True))}
 
-    @app.get(f"{base}/secrets/{{name}}/versions")
+    @app.get(f"{base}/secrets/{{name:path}}/versions")
     async def list_versions(provider: ProviderId, store: StoreName, name: SecretName, data: Session) -> dict[str, Any]:
         found = provider_for(provider, store, data)
         require(found, VERSIONS)

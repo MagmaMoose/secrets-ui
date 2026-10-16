@@ -1,6 +1,6 @@
 apiVersion: v2
 name: secrets-ui
-description: A web UI for secret stores, starting with Azure Key Vault. People sign in with Entra ID, see the stores their app roles name, and every change runs as them under the store's own access control.
+description: A web UI for secret stores, Azure Key Vault and HashiCorp Vault. People sign in with Entra ID, see the stores their app roles name, and every change runs as them under the store's own access control.
 type: application
 
 # version is the CHART version and appVersion the application version. The release
@@ -16,6 +16,7 @@ sources:
 keywords:
   - azure
   - key-vault
+  - hashicorp-vault
   - secrets
   - entra-id
   - workload-identity

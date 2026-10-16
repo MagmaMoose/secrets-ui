@@ -33,6 +33,8 @@ def main() -> None:
                 "credential": "workload identity" if cfg.federated_token_file else "client secret",
                 "providers": list(cfg.providers),
                 "azure_keyvault_roles": cfg.azure_keyvault.roles.pattern if cfg.azure_keyvault else None,
+                "hashicorp_vault": cfg.hashicorp_vault.address if cfg.hashicorp_vault else None,
+                "hashicorp_vault_stores": len(cfg.hashicorp_vault.stores) if cfg.hashicorp_vault else None,
             }
         )
     )

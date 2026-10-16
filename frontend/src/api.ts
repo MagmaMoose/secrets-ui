@@ -1,11 +1,11 @@
 // The backend's JSON API. Same origin, the session cookie rides along, and every write
 // carries the session's CSRF token. Secret values only ever travel in request bodies.
-// A store is one place secrets live (an Azure key vault, later a HashiCorp Vault mount); its
-// provider's features say which controls apply.
+// A store is one place secrets live (an Azure key vault, a folder in a HashiCorp Vault KV mount);
+// its provider's features say which controls apply.
 
 export type Feature = "expiry" | "enable" | "content_type" | "recover" | "versions";
 
-export type ProviderInfo = { id: string; label: string; features: Feature[]; name_pattern: string; name_hint: string };
+export type ProviderInfo = { id: string; label: string; features: Feature[]; name_pattern: string; name_hint: string; value_hint: string };
 
 // `label` is the operator's name for the store, or the store's own name. `audit`: the store's
 // audit log can be shown.
@@ -100,7 +100,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 const at = (store: Store) => `/api/stores/${encodeURIComponent(store.provider)}/${encodeURIComponent(store.name)}`;
-const one = (store: Store, name: string) => `${at(store)}/secrets/${encodeURIComponent(name)}`;
+// A Vault secret's name is a path. Its slashes stay slashes: proxies refuse an encoded one (%2F).
+const path = (name: string) => name.split("/").map(encodeURIComponent).join("/");
+const one = (store: Store, name: string) => `${at(store)}/secrets/${path(name)}`;
 
 export type SecretBody = { value: string; content_type?: string; expires?: string | null };
 
@@ -114,7 +116,7 @@ export const api = {
   update: (store: Store, name: string, body: { enabled?: boolean; expires?: string | null; content_type?: string | null }) =>
     request<{ secret: Secret }>("PATCH", one(store, name), body),
   remove: (store: Store, name: string) => request<unknown>("DELETE", one(store, name)),
-  recover: (store: Store, name: string) => request<unknown>("POST", `${at(store)}/deleted/${encodeURIComponent(name)}/recover`),
+  recover: (store: Store, name: string) => request<unknown>("POST", `${at(store)}/deleted/${path(name)}/recover`),
   reveal: (store: Store, name: string) => request<{ value: string }>("POST", `${one(store, name)}/reveal`).then((r) => r.value),
   audit: (store: Store) => request<{ events: AuditEvent[] }>("GET", `${at(store)}/audit`).then((r) => r.events),
   versions: (store: Store, name: string) => request<{ versions: SecretVersion[] }>("GET", `${one(store, name)}/versions`).then((r) => r.versions),

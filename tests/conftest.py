@@ -1,4 +1,5 @@
-"""A fake Entra ID, Key Vault and Log Analytics behind one httpx MockTransport, and an app wired to them."""
+"""Fake Entra ID, Key Vault, Log Analytics and HashiCorp Vault behind one httpx MockTransport, and
+an app wired to them."""
 
 from __future__ import annotations
 
@@ -87,7 +88,10 @@ class FakeEntra:
             if self.refuse_scope and self.refuse_scope in form["scope"][0]:
                 return httpx.Response(400, json={"error": "invalid_grant", "error_description": "AADSTS65001: The user or administrator has not consented"})
             self.refreshed += 1
-            return httpx.Response(200, json={"expires_in": 3600, "access_token": f"at-{self.refreshed + 1}"})
+            body = {"expires_in": 3600, "access_token": f"at-{self.refreshed + 1}"}
+            if "openid" in form["scope"][0].split():
+                body["id_token"] = self.id_token()
+            return httpx.Response(200, json=body)
         return httpx.Response(400, json={"error": "unsupported_grant_type"})
 
 
@@ -112,12 +116,89 @@ class FakeVault:
 
 
 @dataclass
+class FakeHashiVault:
+    """A KV v2 mount at `secret` and JWT auth at `jwt` (role secrets-ui) that trusts FakeEntra's ID
+    tokens. A token may touch the folders `folders` gives the roles it signed in with."""
+
+    entra: FakeEntra
+    folders: dict[str, str] = field(default_factory=dict)
+    # {path: [{"data", "created_time", "deletion_time", "destroyed"}, ...]}, oldest version first.
+    kv: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    tokens: dict[str, list[str]] = field(default_factory=dict)
+    logins: list[dict[str, Any]] = field(default_factory=list)
+
+    def put(self, path: str, data: dict[str, Any]) -> None:
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S.123456789Z", time.gmtime())
+        self.kv.setdefault(path, []).append({"data": data, "created_time": stamp, "deletion_time": "", "destroyed": False})
+
+    def metadata(self, path: str) -> dict[str, Any]:
+        versions = self.kv[path]
+        return {
+            "created_time": versions[0]["created_time"],
+            "updated_time": versions[-1]["created_time"],
+            "current_version": len(versions),
+            "versions": {str(i + 1): {k: v for k, v in version.items() if k != "data"} for i, version in enumerate(versions)},
+        }
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/v1/")
+        if path == "auth/jwt/login":
+            body = json.loads(request.content)
+            try:
+                claims = jwt.decode(body["jwt"], self.entra.key.public_key(), algorithms=["RS256"], audience=CLIENT, issuer=f"{AUTHORITY}/{TENANT}/v2.0")
+            except jwt.PyJWTError as err:
+                return httpx.Response(400, json={"errors": [f"error validating token: {err}"]})
+            if body.get("role") != "secrets-ui":
+                return httpx.Response(400, json={"errors": [f'role "{body.get("role")}" could not be found']})
+            token = f"hvs.{len(self.tokens) + 1}"
+            self.tokens[token] = list(claims.get("roles") or [])
+            self.logins.append(body)
+            return httpx.Response(200, json={"auth": {"client_token": token, "lease_duration": 3600, "renewable": True}})
+        roles = self.tokens.get(request.headers.get("x-vault-token", ""))
+        if roles is None:
+            return httpx.Response(403, json={"errors": ["2 errors occurred:\n\t* permission denied\n\t* invalid token\n\n"]})
+        mount, _, rest = path.partition("/")
+        kind, _, key = rest.partition("/")
+        if mount != "secret" or kind not in ("data", "metadata", "undelete"):
+            return httpx.Response(404, json={"errors": ["no handler for route"]})
+        if not any(f"{key.rstrip('/')}/".startswith(self.folders[r]) for r in roles if r in self.folders):
+            return httpx.Response(403, json={"errors": ["permission denied"]})
+        method = request.method
+        if kind == "metadata" and request.url.params.get("list") == "true":
+            prefix = key if key.endswith("/") else f"{key}/"
+            keys = sorted({p[len(prefix) :].split("/")[0] + ("/" if "/" in p[len(prefix) :] else "") for p in self.kv if p.startswith(prefix)})
+            return httpx.Response(200, json={"data": {"keys": keys}}) if keys else httpx.Response(404, json={"errors": []})
+        if kind == "data" and method == "POST":
+            self.put(key, json.loads(request.content)["data"])
+            return httpx.Response(200, json={"data": {"version": len(self.kv[key])}})
+        if key not in self.kv:
+            return httpx.Response(404, json={"errors": []})
+        versions = self.kv[key]
+        if kind == "metadata" and method == "GET":
+            return httpx.Response(200, json={"data": self.metadata(key)})
+        if kind == "data" and method == "GET":
+            version = versions[int(request.url.params.get("version") or len(versions)) - 1]
+            if version["deletion_time"] or version["destroyed"]:
+                return httpx.Response(404, json={"data": {"data": None, "metadata": {}}})
+            return httpx.Response(200, json={"data": {"data": version["data"], "metadata": {}}})
+        if kind == "data" and method == "DELETE":
+            versions[-1]["deletion_time"] = time.strftime("%Y-%m-%dT%H:%M:%S.5Z", time.gmtime())
+            return httpx.Response(204)
+        if kind == "undelete" and method == "POST":
+            for number in json.loads(request.content)["versions"]:
+                versions[int(number) - 1]["deletion_time"] = ""
+            return httpx.Response(204)
+        return httpx.Response(405, json={"errors": ["unsupported operation"]})
+
+
+@dataclass
 class World:
     entra: FakeEntra
     vaults: dict[str, FakeVault]
     requests: list[httpx.Request] = field(default_factory=list)
     # What the Log Analytics API answers any audit query with, in the query's column order.
     audit_rows: list[list[Any]] = field(default_factory=list)
+    hashi: FakeHashiVault | None = None
 
     def vault_requests(self) -> list[httpx.Request]:
         return [r for r in self.requests if r.url.host.endswith(".vault.azure.net")]
@@ -131,6 +212,8 @@ class World:
             if path == f"/{TENANT}/oauth2/v2.0/token":
                 return self.entra.token(request)
             return httpx.Response(404)
+        if host == "vault.example.test" and self.hashi is not None:
+            return self.hashi.handle(request)
         if host == "api.loganalytics.azure.com":
             if not request.headers.get("authorization", "").startswith("Bearer at-"):
                 return httpx.Response(401, json={"error": {"code": "AuthorizationRequired", "message": "Valid authentication was not provided"}})
@@ -222,7 +305,7 @@ class World:
 @pytest.fixture
 def world() -> World:
     return World(
-        entra=FakeEntra(roles=["team-a-kv-dev", "team-b-kv-dev", "privileged-kv-prd", "Not_A_Vault", "admin"]),
+        entra=FakeEntra(roles=["team-a-kv-dev", "team-b-kv-dev", "privileged-kv-prd", "Not_A_Vault", "admin", "team-a-vault-dev"]),
         vaults={
             "team-a-kv-dev": FakeVault(
                 secrets={"db-password": {"value": "s3cr3t-db", "contentType": "text/plain", "enabled": True, "exp": None, "created": 1, "updated": 2, "version": 1}}
