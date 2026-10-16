@@ -211,7 +211,9 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         found = providers.get(provider)
         if found is None:
             raise HTTPException(404, "unknown_provider")
-        if store not in (data.get("stores") or {}).get(provider, []):
+        # The sign-in named it, and the configuration still allows it: a store the operator has
+        # since removed or filtered out closes at once, not when the session ends.
+        if store not in (data.get("stores") or {}).get(provider, []) or not found.stores([store]):
             raise HTTPException(403, "store_not_allowed")
         return found
 
@@ -340,7 +342,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
             "stores": [
                 {"provider": pid, "name": name, "label": p.labels.get(name, name), "location": p.location(name), "audit": p.has_audit(name)}
                 for pid, p in providers.items()
-                for name in p.arrange(stores.get(pid, []))
+                for name in p.arrange(n for n in stores.get(pid, []) if p.stores([n]))
             ],
         }
 
