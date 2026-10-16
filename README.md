@@ -5,8 +5,7 @@ People sign in with Entra ID, see only the stores their app roles name, and ever
 change runs **as them**: the store's own access control decides what they may do, and its
 audit log names the person, not the app.
 
-The first provider is **Azure Key Vault**. HashiCorp Vault (KV v2) is next; the provider
-interface in `src/secrets_ui/providers/` is built for it.
+Two providers: **Azure Key Vault**, and **HashiCorp Vault** (KV v2), on their own or together.
 
 What you can do in a vault:
 
@@ -49,10 +48,15 @@ sequenceDiagram
 - **No secret for the app either.** On Kubernetes the app's credential is its own projected
   service-account token, which Entra ID accepts through a federated credential. A client
   secret works too, where there is no workload identity.
-- **Stores from roles.** An app role's value is a store name. A role counts only if it is a
-  valid vault name and matches the operator's pattern (`SECRETS_UI_AZURE_KEYVAULT_ROLES`),
-  so a privileged vault stays out even if its role is assigned by mistake. The server refuses
-  any call to a store the session does not name, before it calls anything.
+- **Stores from roles.** An app role's value is a store name. For Key Vault, a role counts
+  only if it is a valid vault name and matches the operator's pattern
+  (`SECRETS_UI_AZURE_KEYVAULT_ROLES`), so a privileged vault stays out even if its role is
+  assigned by mistake; for HashiCorp Vault, only if it names a store the operator listed. The
+  server refuses any call to a store the session does not name, before it calls anything.
+- **HashiCorp Vault as the person.** The app presents a fresh Entra ID token (audience: the
+  app, with the person's roles) to Vault's JWT auth method and uses the Vault token that comes
+  back, kept in the replica's memory. Vault's policies decide what the person may do, and
+  Vault's audit log names them.
 - **Values.** A value is fetched only by an explicit POST, comes back with `no-store`, lives
   in the page's memory for a minute, and is never logged, cached or put in a URL. Request
   validation errors never echo what was sent.
@@ -60,8 +64,9 @@ sequenceDiagram
   `default-src 'none'` with `'self'` for scripts and styles and no inline code, no framing,
   HSTS.
 
-Network: the app calls `login.microsoftonline.com` and `<vault>.vault.azure.net` on 443. If
-your vaults have a firewall, it has to allow the app's egress address, not the people's.
+Network: the app calls `login.microsoftonline.com` and `<vault>.vault.azure.net` on 443, and
+your HashiCorp Vault where it listens. If your vaults have a firewall, it has to allow the app's
+egress address, not the people's.
 
 ## Set up the app registration
 
@@ -96,6 +101,42 @@ az ad app permission admin-consent --id "$app"
 App roles, role assignments and the federated credential are easiest in Terraform
 (`azuread_application`, `azuread_app_role_assignment`,
 `azuread_application_federated_identity_credential`).
+
+## Set up HashiCorp Vault
+
+A store is a folder in a KV v2 mount, such as `secret/dev/team-a`. A person sees it when an app
+role on the registration (value: the store name) is assigned to them; Vault's policies decide
+what they can do there. A value is the secret's JSON object of keys and values. Delete deletes
+the current version (Deleted lists it and Recover undeletes it); expiry, disabling and content
+types are Key Vault's and do not show for Vault.
+
+Vault signs people in with their Entra ID token through the JWT auth method. Vault has to reach
+`login.microsoftonline.com` for the tenant's keys:
+
+```bash
+vault auth enable jwt
+vault write auth/jwt/config \
+  oidc_discovery_url="https://login.microsoftonline.com/<tenant id>/v2.0" \
+  bound_issuer="https://login.microsoftonline.com/<tenant id>/v2.0"
+vault write auth/jwt/role/secrets-ui role_type=jwt \
+  bound_audiences="<app id>" user_claim=oid groups_claim=roles \
+  claim_mappings=preferred_username=upn token_ttl=1h token_max_ttl=1h
+
+# Per store: a policy for its folder, and an external group named after the store's role.
+vault policy write team-a-dev - <<'EOF'
+path "secret/data/dev/team-a/*"     { capabilities = ["create", "read", "update", "delete"] }
+path "secret/metadata/dev/team-a/*" { capabilities = ["read", "list"] }
+path "secret/undelete/dev/team-a/*" { capabilities = ["update"] }
+EOF
+accessor=$(vault auth list -format=json | jq -r '."jwt/".accessor')
+group=$(vault write -field=id identity/group name=team-a-dev type=external policies=team-a-dev)
+vault write identity/group-alias name=team-a-vault-dev mount_accessor="$accessor" canonical_id="$group"
+```
+
+Then set `SECRETS_UI_PROVIDERS=azure-keyvault,hashicorp-vault` (or just `hashicorp-vault`),
+`SECRETS_UI_HASHICORP_VAULT_ADDR` and `SECRETS_UI_HASHICORP_VAULT_STORES`, and keep the Vault
+store names out of `SECRETS_UI_AZURE_KEYVAULT_ROLES`. On Kubernetes, a Vault on a private
+address needs `networkPolicy.extraEgress`.
 
 ## Show a vault's audit log
 
@@ -144,9 +185,14 @@ install and keeps it on upgrade (`session.existingSecret` to bring your own). Se
 | `SECRETS_UI_SESSION_HOURS` | `8` | Sign-in lifetime, 1 to 24 |
 | `SECRETS_UI_BRAND_ACCENT` / `_TEXT` | | Your colours as `#rrggbb`: the accent (buttons, links, the selected store, the logo) and the text on it |
 | `SECRETS_UI_BRAND_ACCENT_DARK` / `_TEXT_DARK` | the two above | The same for dark mode |
-| `SECRETS_UI_PROVIDERS` | `azure-keyvault` | Which providers to offer |
+| `SECRETS_UI_PROVIDERS` | `azure-keyvault` | Which providers to offer: `azure-keyvault`, `hashicorp-vault` or both |
 | `SECRETS_UI_AZURE_KEYVAULT_ROLES` | `.+` | Pattern a role must match to count as a vault |
 | `SECRETS_UI_AZURE_KEYVAULT_SUFFIX` | `vault.azure.net` | Key Vault DNS suffix |
+| `SECRETS_UI_HASHICORP_VAULT_ADDR` | | `https://vault.example.com:8200` |
+| `SECRETS_UI_HASHICORP_VAULT_STORES` | | The stores, in the order to show them, as JSON: `[{"name": "team-a-vault-dev", "label": "team-a-dev", "mount": "secret", "path": "dev/team-a"}]`. A person sees a store when an app role is its name |
+| `SECRETS_UI_HASHICORP_VAULT_AUTH_MOUNT` | `jwt` | The JWT auth mount |
+| `SECRETS_UI_HASHICORP_VAULT_AUTH_ROLE` | `secrets-ui` | The role on that mount |
+| `SECRETS_UI_HASHICORP_VAULT_CA_FILE` | | PEM bundle of a private CA, trusted for the calls to Vault only |
 | `SECRETS_UI_AZURE_KEYVAULT_STORES` | | How vaults show, as JSON: `[{"name": "team-a-keyvault-dev", "label": "team-a-dev", "resource_id": "/subscriptions/…/vaults/team-a-keyvault-dev"}]`. Listed vaults come first, in this order, under their label; the rest follow by name. A `resource_id` shows the vault's audit log. It grants nothing |
 
 ## Develop
@@ -158,7 +204,8 @@ cd frontend && npm ci && npm run dev   # UI on :5173, proxies /api and /auth to 
 ```
 
 The tests run the whole sign-in against a fake Entra ID (real signed tokens and JWKS) and a
-fake Key Vault, including the role filter, the reveal path and the CSRF checks.
+fake Key Vault and a fake HashiCorp Vault, including the role filter, the reveal path and the
+CSRF checks.
 
 ## License
 

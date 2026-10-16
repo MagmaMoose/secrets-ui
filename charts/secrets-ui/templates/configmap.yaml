@@ -1,0 +1,15 @@
+{{- with .Values.providers.hashicorpVault }}
+{{- if and .enabled .caBundle }}
+# The private CA that signed Vault's certificate. Only the app's calls to Vault trust it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "secrets-ui.fullname" $ }}-vault-ca
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "secrets-ui.labels" $ | nindent 4 }}
+data:
+  ca.crt: |
+    {{- .caBundle | nindent 4 }}
+{{- end }}
+{{- end }}

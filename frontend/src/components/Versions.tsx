@@ -7,7 +7,8 @@ import { Reveal } from "./Reveal";
 const STATE: Record<SecretVersion["state"], string> = { enabled: "Enabled", disabled: "Disabled", deleted: "Deleted", destroyed: "Destroyed" };
 
 // Every version of one secret, newest first. A value is fetched only on Reveal, one at a time.
-export function Versions({ store, name, expiry, onClose }: { store: Store; name: string; expiry: boolean; onClose: () => void }) {
+// `enable`: the store enables and disables versions; where it cannot, a readable one is Active.
+export function Versions({ store, name, expiry, enable, onClose }: { store: Store; name: string; expiry: boolean; enable: boolean; onClose: () => void }) {
   const [versions, setVersions] = useState<SecretVersion[] | null>(null);
   const [revealed, setRevealed] = useState<{ version: string; value: string } | null>(null);
   const [error, setError] = useState("");
@@ -67,7 +68,7 @@ export function Versions({ store, name, expiry, onClose }: { store: Store; name:
                       {when(v.created)}
                     </td>
                     <td data-label="Status">
-                      <span className={v.state === "enabled" ? "status on" : "status off"}>{STATE[v.state]}</span>
+                      <span className={v.state === "enabled" ? "status on" : "status off"}>{v.state === "enabled" && !enable ? "Active" : STATE[v.state]}</span>
                     </td>
                     {expiry && <td data-label="Expires">{v.expires ? when(v.expires) : <span className="muted">Never</span>}</td>}
                     <td className="actions-cell">

@@ -6,6 +6,13 @@
 {{- end }}
 {{- $providers := list }}
 {{- if .Values.providers.azureKeyVault.enabled }}{{ $providers = append $providers "azure-keyvault" }}{{ end }}
+{{- $vault := .Values.providers.hashicorpVault }}
+{{- if $vault.enabled }}
+{{- $providers = append $providers "hashicorp-vault" }}
+{{- if not $vault.stores }}
+{{- fail "providers.hashicorpVault.stores must list at least one store" }}
+{{- end }}
+{{- end }}
 {{- if not $providers }}
 {{- fail "enable at least one of providers.*" }}
 {{- end }}
@@ -28,9 +35,15 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
+      {{- if or .Values.podAnnotations (and $vault.enabled $vault.caBundle) }}
       annotations:
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if and $vault.enabled $vault.caBundle }}
+        # The app reads the CA at startup, so a new one rolls the pods.
+        checksum/vault-ca: {{ $vault.caBundle | sha256sum }}
+        {{- end }}
       {{- end }}
     spec:
       serviceAccountName: {{ include "secrets-ui.serviceAccountName" . }}
@@ -113,6 +126,20 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- if $vault.enabled }}
+            - name: SECRETS_UI_HASHICORP_VAULT_ADDR
+              value: {{ required "providers.hashicorpVault.address is required, such as https://vault.example.com:8200" $vault.address | quote }}
+            - name: SECRETS_UI_HASHICORP_VAULT_AUTH_MOUNT
+              value: {{ $vault.authMount | quote }}
+            - name: SECRETS_UI_HASHICORP_VAULT_AUTH_ROLE
+              value: {{ $vault.authRole | quote }}
+            - name: SECRETS_UI_HASHICORP_VAULT_STORES
+              value: {{ toJson $vault.stores | quote }}
+            {{- if $vault.caBundle }}
+            - name: SECRETS_UI_HASHICORP_VAULT_CA_FILE
+              value: /etc/secrets-ui/vault-ca/ca.crt
+            {{- end }}
+            {{- end }}
             - name: SECRETS_UI_SESSION_HOURS
               value: {{ .Values.config.sessionHours | quote }}
             - name: SECRETS_UI_SESSION_KEY_FILE
@@ -154,6 +181,11 @@ spec:
               mountPath: /etc/secrets-ui/client
               readOnly: true
             {{- end }}
+            {{- if and $vault.enabled $vault.caBundle }}
+            - name: vault-ca
+              mountPath: /etc/secrets-ui/vault-ca
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
@@ -184,6 +216,11 @@ spec:
             items:
               - key: {{ .Values.azure.clientSecret.key }}
                 path: {{ .Values.azure.clientSecret.key }}
+        {{- end }}
+        {{- if and $vault.enabled $vault.caBundle }}
+        - name: vault-ca
+          configMap:
+            name: {{ include "secrets-ui.fullname" . }}-vault-ca
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

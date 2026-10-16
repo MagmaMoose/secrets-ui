@@ -63,6 +63,24 @@ providers:
     #  - name: team-a-keyvault-dev
     #    label: team-a-dev
     #    resource_id: /subscriptions/<id>/resourceGroups/<group>/providers/Microsoft.KeyVault/vaults/team-a-keyvault-dev
+  hashicorpVault:
+    enabled: false
+    # Where Vault listens, such as https://vault.example.com:8200.
+    address: ""
+    # The JWT auth mount and role that sign people in to Vault with their Entra ID token (see the
+    # README).
+    authMount: jwt
+    authRole: secrets-ui
+    # PEM certificate(s) of the private CA that signed Vault's certificate; empty trusts the public
+    # CAs. Only the calls to Vault trust it.
+    caBundle: ""
+    # One store per folder in a KV v2 mount, in the order to show them in. A person sees a store
+    # when one of their app roles is its name; keep these names out of azureKeyVault.roles.
+    stores: []
+    #  - name: team-a-vault-dev
+    #    label: team-a-dev
+    #    mount: secret
+    #    path: dev/team-a
 
 session:
   # A Secret holding the key that seals session cookies (at least 32 characters), shared by
@@ -108,6 +126,8 @@ networkPolicy:
   # addresses on 443 (Entra ID, the vaults and Log Analytics).
   enabled: false
   ingressFrom: []
+  # More egress rules, rendered as they are: a Vault on a private address needs one.
+  extraEgress: []
 
 resources:
   requests:

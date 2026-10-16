@@ -11,6 +11,7 @@ export function SecretForm({
   name,
   namePattern,
   nameHint,
+  valueHint,
   features,
   contentType,
   submit,
@@ -21,6 +22,7 @@ export function SecretForm({
   name?: string;
   namePattern: string;
   nameHint: string;
+  valueHint: string;
   features: Feature[];
   contentType?: string | null;
   submit: (input: SecretInput) => Promise<unknown>;
@@ -91,7 +93,7 @@ export function SecretForm({
             className="mono"
           />
           <small id={`${id}-value-hint`} className="hint">
-            Stored as a new version. Up to 25 KB.
+            {valueHint}
           </small>
         </div>
         {(features.includes("content_type") || features.includes("expiry")) && (
