@@ -1,4 +1,4 @@
-"""A fake Entra ID and a fake Key Vault behind one httpx MockTransport, and an app wired to them."""
+"""A fake Entra ID, Key Vault and Log Analytics behind one httpx MockTransport, and an app wired to them."""
 
 from __future__ import annotations
 
@@ -38,6 +38,8 @@ class FakeEntra:
     token_requests: list[dict[str, list[str]]] = field(default_factory=list)
     refreshed: int = 0
     refuse_refresh: bool = False
+    # A scope the tenant has not consented to: refreshing for it fails like AADSTS65001.
+    refuse_scope: str = ""
 
     def jwks(self) -> dict[str, Any]:
         jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(self.key.public_key()))
@@ -82,6 +84,8 @@ class FakeEntra:
         if grant == "refresh_token":
             if self.refuse_refresh or form["refresh_token"][0] != "rt-1":
                 return httpx.Response(400, json={"error": "invalid_grant", "error_description": "AADSTS700082: expired"})
+            if self.refuse_scope and self.refuse_scope in form["scope"][0]:
+                return httpx.Response(400, json={"error": "invalid_grant", "error_description": "AADSTS65001: The user or administrator has not consented"})
             self.refreshed += 1
             return httpx.Response(200, json={"expires_in": 3600, "access_token": f"at-{self.refreshed + 1}"})
         return httpx.Response(400, json={"error": "unsupported_grant_type"})
@@ -112,6 +116,8 @@ class World:
     entra: FakeEntra
     vaults: dict[str, FakeVault]
     requests: list[httpx.Request] = field(default_factory=list)
+    # What the Log Analytics API answers any audit query with, in the query's column order.
+    audit_rows: list[list[Any]] = field(default_factory=list)
 
     def vault_requests(self) -> list[httpx.Request]:
         return [r for r in self.requests if r.url.host.endswith(".vault.azure.net")]
@@ -125,6 +131,11 @@ class World:
             if path == f"/{TENANT}/oauth2/v2.0/token":
                 return self.entra.token(request)
             return httpx.Response(404)
+        if host == "api.loganalytics.azure.com":
+            if not request.headers.get("authorization", "").startswith("Bearer at-"):
+                return httpx.Response(401, json={"error": {"code": "AuthorizationRequired", "message": "Valid authentication was not provided"}})
+            columns = ["TimeGenerated", "OperationName", "ResultSignature", "CallerIp", "Caller", "Target"]
+            return httpx.Response(200, json={"tables": [{"name": "PrimaryResult", "columns": [{"name": c} for c in columns], "rows": self.audit_rows}]})
         name = host.removesuffix(".vault.azure.net")
         vault = self.vaults.get(name)
         if vault is None:

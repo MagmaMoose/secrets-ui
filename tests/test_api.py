@@ -3,6 +3,9 @@ import logging
 
 from conftest import ORIGIN, make_client, sign_in, write_headers
 
+VAULT_ID = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-secrets/providers/Microsoft.KeyVault/vaults/team-a-kv-dev"
+WITH_AUDIT = {"SECRETS_UI_AZURE_KEYVAULT_STORES": json.dumps([{"name": "team-a-kv-dev", "resource_id": VAULT_ID}])}
+
 
 def test_api_needs_a_session(client):
     assert client.get("/api/me").status_code == 401
@@ -170,6 +173,34 @@ def test_older_versions_are_listed_newest_first_and_revealed_one_at_a_time(clien
 
     bad = client.post(f"{base}/reveal", headers=write_headers(me), json={"version": "../keys"})
     assert bad.status_code == 400 and world.vault_requests()[-1].url.path == f"/secrets/db-password/{old}"
+
+
+def test_the_audit_log_is_the_vaults_own_read_with_the_persons_token(world, env):
+    client = make_client(world, {**env, **WITH_AUDIT})
+    me = sign_in(client, world)
+    assert [(s["name"], s["audit"]) for s in me["stores"]] == [("team-a-kv-dev", True), ("team-b-kv-dev", False)]
+    world.audit_rows = [["2026-10-16T09:30:00.1234567Z", "SecretGet", "OK", "10.1.2.3", "ada@example.test", "https://team-a-kv-dev.vault.azure.net/secrets/db-password/0a1b"]]
+    response = client.get("/api/stores/azure-keyvault/team-a-kv-dev/audit")
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    assert response.json()["events"] == [
+        {"time": 1792143000, "operation": "SecretGet", "result": "OK", "caller": "ada@example.test", "ip": "10.1.2.3", "secret": "db-password"}
+    ]
+    (query,) = [r for r in world.requests if r.url.host == "api.loganalytics.azure.com"]
+    assert query.method == "POST" and query.url.path == f"/v1{VAULT_ID}/query" and not query.url.query
+    assert json.loads(query.content)["timespan"] == "P30D"
+    assert world.entra.token_requests[-1]["scope"] == ["offline_access https://api.loganalytics.io/Data.Read"]
+    assert query.headers["authorization"] == f"Bearer at-{world.entra.refreshed + 1}"
+    assert client.get("/api/stores/azure-keyvault/team-b-kv-dev/audit").json()["error"] == "audit_not_configured"
+
+
+def test_no_consent_for_the_audit_log_leaves_the_person_signed_in(world, env):
+    client = make_client(world, {**env, **WITH_AUDIT})
+    sign_in(client, world)
+    world.entra.refuse_scope = "loganalytics"
+    response = client.get("/api/stores/azure-keyvault/team-a-kv-dev/audit")
+    assert response.status_code == 403
+    assert response.json()["error"] == "audit_unavailable" and "AADSTS65001" in response.json()["message"]
+    assert client.get("/api/stores/azure-keyvault/team-a-kv-dev/secrets").status_code == 200
 
 
 def test_soft_delete_and_recover(client, world):

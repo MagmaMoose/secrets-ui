@@ -7,8 +7,9 @@ export type Feature = "expiry" | "enable" | "content_type" | "recover" | "versio
 
 export type ProviderInfo = { id: string; label: string; features: Feature[]; name_pattern: string; name_hint: string };
 
-// `label` is the operator's name for the store, or the store's own name.
-export type Store = { provider: string; name: string; label: string; location: string };
+// `label` is the operator's name for the store, or the store's own name. `audit`: the store's
+// audit log can be shown.
+export type Store = { provider: string; name: string; label: string; location: string; audit: boolean };
 
 export type Me = {
   name: string;
@@ -33,6 +34,9 @@ export type Secret = {
 };
 
 export type DeletedSecret = Secret & { deleted: number | null; purge_at: number | null };
+
+// One entry in a store's own audit log; `secret` is empty for an operation on the store itself.
+export type AuditEvent = { time: number | null; operation: string; result: string; caller: string; ip: string; secret: string };
 
 export type SecretVersion = {
   version: string;
@@ -112,6 +116,7 @@ export const api = {
   remove: (store: Store, name: string) => request<unknown>("DELETE", one(store, name)),
   recover: (store: Store, name: string) => request<unknown>("POST", `${at(store)}/deleted/${encodeURIComponent(name)}/recover`),
   reveal: (store: Store, name: string) => request<{ value: string }>("POST", `${one(store, name)}/reveal`).then((r) => r.value),
+  audit: (store: Store) => request<{ events: AuditEvent[] }>("GET", `${at(store)}/audit`).then((r) => r.events),
   versions: (store: Store, name: string) => request<{ versions: SecretVersion[] }>("GET", `${one(store, name)}/versions`).then((r) => r.versions),
   revealVersion: (store: Store, name: string, version: string) =>
     request<{ value: string }>("POST", `${one(store, name)}/reveal`, { version }).then((r) => r.value),

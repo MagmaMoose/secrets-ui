@@ -102,7 +102,7 @@ def build_providers(cfg: Config, http: httpx.AsyncClient) -> dict[str, Provider]
     providers: dict[str, Provider] = {}
     if cfg.azure_keyvault is not None:
         kv = cfg.azure_keyvault
-        providers[AzureKeyVault.id] = AzureKeyVault(http, roles=kv.roles, suffix=kv.suffix, labels=kv.labels)
+        providers[AzureKeyVault.id] = AzureKeyVault(http, roles=kv.roles, suffix=kv.suffix, labels=kv.labels, resource_ids=kv.resource_ids)
     return providers
 
 
@@ -222,6 +222,19 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
                 raise HTTPException(401, "signed_out") from err
             raise
 
+    async def audit_token(data: dict[str, Any], found: Provider, *, fresh: bool = False) -> str:
+        key = f"{data['sid']}:{found.id}:audit"
+        token = None if fresh else tokens.get(key)
+        if token is None:
+            try:
+                token, expires_at = await entra.refresh(str(data["rt"]), scope=found.audit_scope)
+            except EntraError as err:
+                _log("audit credential failed", user=data.get("oid"), provider=found.id, status=err.status, reason=str(err))
+                # Not a sign-out: without consent for the log API, the stores themselves still work.
+                raise ProviderError(403, "audit_unavailable", f"No access to the audit log. {err}") from err
+            tokens.put(key, token, expires_at)
+        return token
+
     # ── Sign-in ───────────────────────────────────────────────────────────────────────
 
     @app.get("/healthz")
@@ -300,7 +313,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
             "version": cfg.version,
             "providers": [p.describe() for p in providers.values()],
             "stores": [
-                {"provider": pid, "name": name, "label": p.labels.get(name, name), "location": p.location(name)}
+                {"provider": pid, "name": name, "label": p.labels.get(name, name), "location": p.location(name), "audit": p.has_audit(name)}
                 for pid, p in providers.items()
                 for name in p.arrange(stores.get(pid, []))
             ],
@@ -387,6 +400,18 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         value = await call(data, found, found.get_value, store, name, version=version)
         _log("secret revealed", user=data.get("oid"), provider=provider, store=store, secret=name, **({"version": version} if version else {}))
         return {"value": value}
+
+    @app.get(f"{base}/audit")
+    async def audit(provider: ProviderId, store: StoreName, data: Session) -> dict[str, Any]:
+        found = provider_for(provider, store, data)
+        if not found.has_audit(store):
+            raise HTTPException(400, "audit_not_configured")
+        try:
+            return {"events": await found.audit(store, await audit_token(data, found))}
+        except ProviderError as err:
+            if err.status != 401:
+                raise
+        return {"events": await found.audit(store, await audit_token(data, found, fresh=True))}
 
     @app.get(f"{base}/secrets/{{name}}/versions")
     async def list_versions(provider: ProviderId, store: StoreName, name: SecretName, data: Session) -> dict[str, Any]:

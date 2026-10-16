@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _HOST = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
 _COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
+_VAULT_ID = re.compile(r"^/subscriptions/[0-9a-f-]{36}/resourceGroups/[\w.()-]{1,90}/providers/Microsoft\.KeyVault/vaults/([a-z0-9-]{3,24})$", re.I)
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}  # DevSkim: ignore DS162092 - plain http is allowed on loopback, for local development
 PROVIDERS = ("azure-keyvault",)
 
@@ -31,6 +32,8 @@ class AzureKeyVaultConfig:
     suffix: str = "vault.azure.net"
     # {vault: label}, in the order to show the vaults in.
     labels: dict[str, str] = field(default_factory=dict)
+    # {vault: its Azure resource id}, for the vaults whose audit log the UI shows.
+    resource_ids: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -154,8 +157,18 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         suffix = env.get("SECRETS_UI_AZURE_KEYVAULT_SUFFIX", "vault.azure.net").strip().lower()
         if not _HOST.match(suffix):
             raise ConfigError("SECRETS_UI_AZURE_KEYVAULT_SUFFIX must be a DNS suffix, such as vault.azure.net")
-        labels = {s["name"]: s.get("label") or s["name"] for s in _stores(env, "SECRETS_UI_AZURE_KEYVAULT_STORES")}
-        azure_keyvault = AzureKeyVaultConfig(roles=_pattern(env, "SECRETS_UI_AZURE_KEYVAULT_ROLES"), suffix=suffix, labels=labels)
+        stores = _stores(env, "SECRETS_UI_AZURE_KEYVAULT_STORES")
+        resource_ids = {s["name"]: s["resource_id"] for s in stores if s.get("resource_id")}
+        for name, resource_id in resource_ids.items():
+            found = _VAULT_ID.match(str(resource_id))
+            if not found or found.group(1).lower() != name:
+                raise ConfigError(f"SECRETS_UI_AZURE_KEYVAULT_STORES: the resource_id of {name} must be /subscriptions/<id>/resourceGroups/<group>/providers/Microsoft.KeyVault/vaults/{name}")
+        azure_keyvault = AzureKeyVaultConfig(
+            roles=_pattern(env, "SECRETS_UI_AZURE_KEYVAULT_ROLES"),
+            suffix=suffix,
+            labels={s["name"]: s.get("label") or s["name"] for s in stores},
+            resource_ids=resource_ids,
+        )
 
     try:
         hours = int(env.get("SECRETS_UI_SESSION_HOURS", "8"))
