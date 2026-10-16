@@ -17,6 +17,7 @@ logs, caches or keeps it. Write responses carry the value back; they are read fo
 from __future__ import annotations
 
 import re
+import time
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -213,6 +214,22 @@ class AzureKeyVault(Provider):
         # An empty last segment is the latest version, as the Key Vault SDKs ask for it.
         body = await self._call("GET", self._url(store, "secrets", name, version), token)
         return str(body.get("value", ""))
+
+    async def restore(self, store: str, name: str, version: str, token: str) -> None:
+        self._check(name)
+        if not _VERSION.match(version):
+            raise ProviderError(400, "invalid_version", "Not a Key Vault secret version.")
+        old = await self._call("GET", self._url(store, "secrets", name, version), token)
+        expires = (old.get("attributes") or {}).get("exp")
+        # An expiry already past would leave the restored value expired; it is dropped instead.
+        await self.set_secret(
+            store,
+            name,
+            token,
+            value=str(old.get("value", "")),
+            content_type=old.get("contentType"),
+            expires=expires if isinstance(expires, int) and expires > time.time() else None,
+        )
 
     async def list_versions(self, store: str, name: str, token: str) -> list[dict[str, Any]]:
         self._check(name)

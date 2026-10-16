@@ -249,6 +249,19 @@ class HashiCorpVault(Provider):
         current = (await self._metadata(store, name, token)).get("current_version")
         await self._call("POST", self._kv(store, "undelete", name), token, json={"versions": [current]})
 
+    async def restore(self, store: str, name: str, version: str, token: str) -> None:
+        """What `vault kv rollback` does: the old data as a new version, refused if another write
+        came first."""
+        self._check(name)
+        if not _VERSION.match(version):
+            raise ProviderError(400, "invalid_version", "Not a Vault secret version.")
+        body = await self._call("GET", self._kv(store, "data", name), token, params={"version": version})
+        data = (body.get("data") or {}).get("data")
+        if not isinstance(data, dict):
+            raise ProviderError(404, "NotFound", "This version holds no data: it is deleted or destroyed.")
+        current = (await self._metadata(store, name, token)).get("current_version")
+        await self._call("POST", self._kv(store, "data", name), token, json={"data": data, "options": {"cas": current}})
+
     async def list_versions(self, store: str, name: str, token: str) -> list[dict[str, Any]]:
         self._check(name)
         meta = await self._metadata(store, name, token)

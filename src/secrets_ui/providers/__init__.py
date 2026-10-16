@@ -97,6 +97,11 @@ class Provider(ABC):
         deleted or destroyed) and current."""
         raise ProviderError(400, "versions_not_supported", "This store keeps no versions.")
 
+    async def restore(self, store: str, name: str, version: str, token: str) -> None:
+        """Make `version` current again: as a new version holding its value, where the store cannot
+        point back at an old one."""
+        raise ProviderError(400, "versions_not_supported", "This store keeps no versions.")
+
     @abstractmethod
     async def exists(self, store: str, name: str, token: str) -> bool: ...
 

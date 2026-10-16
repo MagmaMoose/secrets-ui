@@ -132,6 +132,16 @@ def test_versions_newest_first_and_an_old_one_revealed(vclient, world):
     assert vclient.get(f"{BASE}/secrets/db/versions").json()["versions"][0]["state"] == "deleted"
 
 
+def test_restore_writes_the_old_data_as_a_new_version_with_check_and_set(vclient, world, hashi):
+    me = sign_in(vclient, world)
+    assert vclient.post(f"{BASE}/secrets/db/versions", headers=write_headers(me), json={"value": '{"password": "rotated"}'}).status_code == 201
+    response = vclient.post(f"{BASE}/secrets/db/restore", headers=write_headers(me), json={"version": "1"})
+    assert response.status_code == 200, response.text
+    assert [v["data"] for v in hashi.kv["dev/team-a/db"]] == [{"password": "s3cr3t-db"}, {"password": "rotated"}, {"password": "s3cr3t-db"}]
+    write = [r for r in vault_requests(world) if r.method == "POST" and r.url.path.startswith("/v1/secret/data/")][-1]
+    assert json.loads(write.content)["options"] == {"cas": 2}
+
+
 def test_attributes_vault_does_not_have_are_refused(vclient, world):
     me = sign_in(vclient, world)
     response = vclient.patch(f"{BASE}/secrets/db", headers=write_headers(me), json={"enabled": False})

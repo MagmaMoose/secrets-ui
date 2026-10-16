@@ -169,7 +169,11 @@ class FakeHashiVault:
             keys = sorted({p[len(prefix) :].split("/")[0] + ("/" if "/" in p[len(prefix) :] else "") for p in self.kv if p.startswith(prefix)})
             return httpx.Response(200, json={"data": {"keys": keys}}) if keys else httpx.Response(404, json={"errors": []})
         if kind == "data" and method == "POST":
-            self.put(key, json.loads(request.content)["data"])
+            body = json.loads(request.content)
+            cas = (body.get("options") or {}).get("cas")
+            if cas is not None and cas != len(self.kv.get(key, [])):
+                return httpx.Response(400, json={"errors": ["check-and-set parameter did not match the current version"]})
+            self.put(key, body["data"])
             return httpx.Response(200, json={"data": {"version": len(self.kv[key])}})
         if key not in self.kv:
             return httpx.Response(404, json={"errors": []})
