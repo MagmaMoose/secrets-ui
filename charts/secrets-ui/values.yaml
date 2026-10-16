@@ -85,6 +85,8 @@ topologySpread:
   whenUnsatisfiable: ScheduleAnyway
   # Honor keeps tainted nodes out of the count; empty leaves the Kubernetes default.
   nodeTaintsPolicy: ""
+# Or your own constraints, rendered as they are instead of the one above.
+topologySpreadConstraints: []
 
 networkPolicy:
   # Ingress to the http port from ingressFrom (any pod when empty); egress to DNS and to public

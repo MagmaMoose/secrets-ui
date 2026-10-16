@@ -49,7 +49,10 @@ spec:
         fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
-      {{- if .Values.topologySpread.enabled }}
+      {{- if .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+      {{- else if .Values.topologySpread.enabled }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
