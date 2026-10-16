@@ -57,10 +57,12 @@ providers:
     # The Key Vault DNS suffix: vault.azure.net, or a sovereign cloud's.
     suffix: vault.azure.net
     # How vaults show in the UI. Listed vaults come first, in this order, under their label
-    # (default: the vault name); the rest follow by name. Listing a vault grants nobody access.
+    # (default: the vault name); the rest follow by name. A resource_id shows the vault's audit
+    # log (see the README). Listing a vault grants nobody access.
     stores: []
     #  - name: team-a-keyvault-dev
     #    label: team-a-dev
+    #    resource_id: /subscriptions/<id>/resourceGroups/<group>/providers/Microsoft.KeyVault/vaults/team-a-keyvault-dev
 
 session:
   # A Secret holding the key that seals session cookies (at least 32 characters), shared by
@@ -103,7 +105,7 @@ topologySpreadConstraints: []
 
 networkPolicy:
   # Ingress to the http port from ingressFrom (any pod when empty); egress to DNS and to public
-  # addresses on 443 (Entra ID and the vaults).
+  # addresses on 443 (Entra ID, the vaults and Log Analytics).
   enabled: false
   ingressFrom: []
 

@@ -6,6 +6,10 @@ security boundary (Azure RBAC on each vault is); it decides which vaults the UI 
 which hosts the server calls at all. The pattern is how a deployment keeps privileged vaults
 out even if a role for one is assigned by mistake.
 
+A vault's audit log is its diagnostic setting's AuditEvent records, read through the Log
+Analytics API by the vault's resource id, again with the person's own token: Azure RBAC on the
+vault's logs decides who sees them.
+
 Values pass through here and nowhere else: get_value returns one to the caller, and nothing
 logs, caches or keeps it. Write responses carry the value back; they are read for errors only.
 """
@@ -13,12 +17,13 @@ logs, caches or keeps it. Write responses carry the value back; they are read fo
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
 
-from . import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, VERSIONS, Provider, ProviderError
+from . import AUDIT, CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, VERSIONS, Provider, ProviderError
 
 API_VERSION = "7.5"
 _MAX_PAGES = 40  # 1000 secrets at Key Vault's 25 per page
@@ -27,6 +32,27 @@ _MAX_PAGES = 40  # 1000 secrets at Key Vault's 25 per page
 _VAULT_NAME = re.compile(r"^[a-z](?:[a-z0-9]|-(?!-))*[a-z0-9]$")
 _NAME_RULE = r"^[0-9a-zA-Z-]{1,127}$"
 _VERSION = re.compile(r"^[0-9a-f]{32}$")
+# shortcut: the public cloud's Log Analytics host only, add a setting when a sovereign cloud needs it.
+_LOGS = "https://api.loganalytics.azure.com"
+# AuditEvent lands in AzureDiagnostics or AZKVAuditLogs, as the diagnostic setting chose. Listing
+# is left out: every page view lists.
+_AUDIT_QUERY = """
+union isfuzzy=true
+  (AzureDiagnostics
+   | where Category == "AuditEvent"
+   | project TimeGenerated, OperationName, ResultSignature,
+       CallerIp = column_ifexists("CallerIPAddress", ""),
+       Caller = coalesce(column_ifexists("identity_claim_upn_s", ""),
+         column_ifexists("identity_claim_http_schemas_xmlsoap_org_ws_2005_05_identity_claims_upn_s", ""),
+         column_ifexists("identity_claim_oid_g", ""), column_ifexists("identity_claim_appid_g", "")),
+       Target = coalesce(column_ifexists("id_s", ""), column_ifexists("requestUri_s", ""))),
+  (AZKVAuditLogs
+   | project TimeGenerated, OperationName, ResultSignature, CallerIp = CallerIpAddress,
+       Caller = coalesce(tostring(Identity.claim.upn), tostring(Identity.claim.oid), tostring(Identity.claim.appid)),
+       Target = coalesce(Id, RequestUri))
+| where OperationName startswith "Secret" and OperationName !startswith "SecretList"
+| top 500 by TimeGenerated desc
+"""
 
 
 def is_vault_name(value: str) -> bool:
@@ -51,6 +77,22 @@ def _message(body: Any) -> tuple[str, str]:
     return code, " ".join(keep)[:500] or code
 
 
+def _event(row: dict[str, Any]) -> dict[str, Any]:
+    target = urlsplit(str(row.get("Target") or "")).path.strip("/").split("/")
+    try:
+        time = int(datetime.fromisoformat(str(row.get("TimeGenerated"))[:19]).replace(tzinfo=UTC).timestamp())
+    except ValueError:
+        time = None
+    return {
+        "time": time,
+        "operation": str(row.get("OperationName") or ""),
+        "result": str(row.get("ResultSignature") or ""),
+        "caller": str(row.get("Caller") or ""),
+        "ip": str(row.get("CallerIp") or ""),
+        "secret": target[1] if len(target) > 1 and target[0] in ("secrets", "deletedsecrets") else "",
+    }
+
+
 def _item(item: dict[str, Any]) -> dict[str, Any]:
     attributes = item.get("attributes") or {}
     # An id is https://<vault>/secrets/<name>, with /<version> after it on a single secret.
@@ -70,15 +112,24 @@ def _item(item: dict[str, Any]) -> dict[str, Any]:
 class AzureKeyVault(Provider):
     id = "azure-keyvault"
     label = "Azure Key Vault"
-    features = frozenset({EXPIRY, ENABLE, CONTENT_TYPE, RECOVER, VERSIONS})
+    features = frozenset({EXPIRY, ENABLE, CONTENT_TYPE, RECOVER, VERSIONS, AUDIT})
     name_pattern = _NAME_RULE
     name_hint = "Letters, digits and hyphens, up to 127."
 
-    def __init__(self, http: httpx.AsyncClient, *, roles: re.Pattern[str], suffix: str, labels: dict[str, str] | None = None):
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        *,
+        roles: re.Pattern[str],
+        suffix: str,
+        labels: dict[str, str] | None = None,
+        resource_ids: dict[str, str] | None = None,
+    ):
         super().__init__(labels)
         self._http = http
         self._roles = roles
         self._suffix = suffix
+        self._resource_ids = dict(resource_ids or {})
 
     @property
     def sign_in_scope(self) -> str:
@@ -86,6 +137,13 @@ class AzureKeyVault(Provider):
 
     def stores(self, roles: Any) -> tuple[str, ...]:
         return vaults_from_roles(roles, self._roles)
+
+    @property
+    def audit_scope(self) -> str:
+        return "https://api.loganalytics.io/Data.Read"
+
+    def has_audit(self, store: str) -> bool:
+        return store in self._resource_ids
 
     def location(self, store: str) -> str:
         return f"https://{self._host(store)}"
@@ -97,18 +155,18 @@ class AzureKeyVault(Provider):
         if not re.fullmatch(_NAME_RULE, name):
             raise ProviderError(400, "invalid_name", f"Not a Key Vault secret name. {self.name_hint}")
 
-    async def _call(self, method: str, url: str, token: str, *, json: Any = None) -> Any:
+    async def _call(self, method: str, url: str, token: str, *, json: Any = None, params: dict[str, str] | None = None) -> Any:
         try:
             response = await self._http.request(
                 method,
                 url,
                 json=json,
-                params=None if "api-version=" in url else {"api-version": API_VERSION},
+                params=params if params is not None else None if "api-version=" in url else {"api-version": API_VERSION},
                 headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
                 timeout=20,
             )
         except httpx.HTTPError as err:
-            raise ProviderError(502, "Unreachable", f"cannot reach the vault: {err.__class__.__name__}") from err
+            raise ProviderError(502, "Unreachable", f"cannot reach {urlsplit(url).hostname}: {err.__class__.__name__}") from err
         try:
             body = response.json() if response.content else {}
         except ValueError:
@@ -215,3 +273,12 @@ class AzureKeyVault(Provider):
     async def recover(self, store: str, name: str, token: str) -> None:
         self._check(name)
         await self._call("POST", self._url(store, "deletedsecrets", name, "recover"), token)
+
+    async def audit(self, store: str, token: str) -> list[dict[str, Any]]:
+        if store not in self._resource_ids:
+            raise ProviderError(400, "audit_not_configured", "No audit log is set up for this vault.")
+        url = f"{_LOGS}/v1{self._resource_ids[store]}/query"
+        body = await self._call("POST", url, token, json={"query": _AUDIT_QUERY, "timespan": "P30D"}, params={})
+        tables = body.get("tables") or [{}]
+        columns = [str(c.get("name")) for c in tables[0].get("columns") or []]
+        return [_event(dict(zip(columns, row, strict=False))) for row in tables[0].get("rows") or []]

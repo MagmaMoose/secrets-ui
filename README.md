@@ -16,6 +16,7 @@ What you can do in a vault:
 - delete (soft delete) and recover; purging is left out on purpose
 - reveal a value, after an explicit click, for a minute
 - list a secret's earlier versions and reveal one the same way
+- read the vault's own audit log: who read or changed which secret, when, and from where
 
 ## How it works
 
@@ -96,6 +97,22 @@ App roles, role assignments and the federated credential are easiest in Terrafor
 (`azuread_application`, `azuread_app_role_assignment`,
 `azuread_application_federated_identity_credential`).
 
+## Show a vault's audit log
+
+Optional, per vault. The log is the vault's own `AuditEvent` records, read through the Log
+Analytics API with the person's token, so Azure RBAC decides who sees it:
+
+1. The vault has a diagnostic setting that sends the `audit` category to a Log Analytics
+   workspace (either destination table, `AzureDiagnostics` or `AZKVAuditLogs`).
+2. The app registration has the delegated permission Log Analytics API `Data.Read`, with admin
+   consent. Without it, the audit log answers "no access" and everything else keeps working.
+3. People may read the vault's logs: Reader on the vault, or a role with
+   `Microsoft.Insights/logs/AzureDiagnostics/read` and `Microsoft.Insights/logs/AZKVAuditLogs/read`.
+4. The vault is listed in `SECRETS_UI_AZURE_KEYVAULT_STORES` with its `resource_id`.
+
+The UI shows the last 30 days of reads and changes (not listings), newest first. The app calls
+`api.loganalytics.azure.com` for it.
+
 ## Install
 
 ```bash
@@ -130,7 +147,7 @@ install and keeps it on upgrade (`session.existingSecret` to bring your own). Se
 | `SECRETS_UI_PROVIDERS` | `azure-keyvault` | Which providers to offer |
 | `SECRETS_UI_AZURE_KEYVAULT_ROLES` | `.+` | Pattern a role must match to count as a vault |
 | `SECRETS_UI_AZURE_KEYVAULT_SUFFIX` | `vault.azure.net` | Key Vault DNS suffix |
-| `SECRETS_UI_AZURE_KEYVAULT_STORES` | | How vaults show, as JSON: `[{"name": "team-a-keyvault-dev", "label": "team-a-dev"}]`. Listed vaults come first, in this order, under their label; the rest follow by name. It grants nothing |
+| `SECRETS_UI_AZURE_KEYVAULT_STORES` | | How vaults show, as JSON: `[{"name": "team-a-keyvault-dev", "label": "team-a-dev", "resource_id": "/subscriptions/…/vaults/team-a-keyvault-dev"}]`. Listed vaults come first, in this order, under their label; the rest follow by name. A `resource_id` shows the vault's audit log. It grants nothing |
 
 ## Develop
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, ApiError, type DeletedSecret, type Feature, type ProviderInfo, type Secret, type Store } from "../api";
+import { api, ApiError, type AuditEvent, type DeletedSecret, type Feature, type ProviderInfo, type Secret, type Store } from "../api";
 import { expiryState, fromNow, when } from "../format";
 import { Confirm } from "./Dialog";
 import { ExpiryForm } from "./ExpiryForm";
@@ -9,6 +9,8 @@ import { SecretForm } from "./SecretForm";
 import { Versions } from "./Versions";
 
 type Notify = (message: string, kind?: "info" | "error") => void;
+
+const TAB_LABEL = { secrets: "Secrets", deleted: "Deleted", audit: "Audit log" };
 
 type Modal =
   | { kind: "create" }
@@ -37,9 +39,10 @@ function Expiry({ epoch }: { epoch: number | null }) {
 
 export function StoreView({ store, provider, notify }: { store: Store; provider: ProviderInfo; notify: Notify }) {
   const has = useCallback((feature: Feature) => provider.features.includes(feature), [provider]);
-  const [tab, setTab] = useState<"secrets" | "deleted">("secrets");
+  const [tab, setTab] = useState<"secrets" | "deleted" | "audit">("secrets");
   const [secrets, setSecrets] = useState<Secret[] | null>(null);
   const [deleted, setDeleted] = useState<DeletedSecret[] | null>(null);
+  const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
   const [revealed, setRevealed] = useState<{ name: string; value: string } | null>(null);
@@ -50,7 +53,8 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
     setError("");
     try {
       if (tab === "secrets") setSecrets(await api.secrets(store));
-      else setDeleted(await api.deleted(store));
+      else if (tab === "deleted") setDeleted(await api.deleted(store));
+      else setEvents(await api.audit(store));
     } catch (err) {
       setError(errorText(err));
     }
@@ -59,6 +63,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
   useEffect(() => {
     setSecrets(null);
     setDeleted(null);
+    setEvents(null);
     setRevealed(null);
     setFilter("");
     setTab("secrets");
@@ -77,14 +82,20 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
     return list?.filter((s) => !needle || s.name.toLowerCase().includes(needle)) ?? null;
   }, [tab, secrets, deleted, filter]);
 
+  const auditRows = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    return events?.filter((e) => !needle || `${e.secret} ${e.caller} ${e.operation}`.toLowerCase().includes(needle)) ?? null;
+  }, [events, filter]);
+
   async function act(name: string, action: () => Promise<unknown>, done: string) {
     setBusy(name);
     try {
       await action();
       notify(done);
-      // The other tab's list is stale now too; it reloads when opened.
+      // The other tabs' lists are stale now too; they reload when opened.
       if (tab === "secrets") setDeleted(null);
       else setSecrets(null);
+      setEvents(null);
       await load();
     } catch (err) {
       notify(errorText(err), "error");
@@ -124,7 +135,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
   }
 
   const columns = 3 + Number(has("enable")) + Number(has("expiry")) + Number(has("content_type"));
-  const tabs = has("recover") ? (["secrets", "deleted"] as const) : (["secrets"] as const);
+  const tabs = (["secrets", "deleted", "audit"] as const).filter((t) => t === "secrets" || (t === "deleted" ? has("recover") : store.audit));
 
   return (
     <section className="vault" aria-labelledby="store-title">
@@ -141,16 +152,23 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
       <div className="toolbar">
         <div className="tabs" role="tablist" aria-label="Secrets or deleted secrets">
           {tabs.map((t) => {
-            const list = t === "secrets" ? secrets : deleted;
+            const list = t === "secrets" ? secrets : t === "deleted" ? deleted : events;
             return (
               <button key={t} type="button" role="tab" aria-selected={tab === t} className="tab" onClick={() => setTab(t)}>
-                {t === "secrets" ? "Secrets" : "Deleted"}
+                {TAB_LABEL[t]}
                 {list && <span className="count">{list.length}</span>}
               </button>
             );
           })}
         </div>
-        <input className="filter" type="search" placeholder="Filter by name" aria-label="Filter by name" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <input
+          className="filter"
+          type="search"
+          placeholder={tab === "audit" ? "Filter by secret or person" : "Filter by name"}
+          aria-label="Filter"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
         <button type="button" className="button" onClick={() => void load()}>
           Refresh
         </button>
@@ -161,9 +179,53 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
           {error}
         </p>
       )}
-      {!error && rows === null && <p className="muted">Loading…</p>}
-      {rows && rows.length === 0 && (
+      {!error && (tab === "audit" ? auditRows : rows) === null && <p className="muted">Loading…</p>}
+      {tab !== "audit" && rows && rows.length === 0 && (
         <p className="empty">{filter ? "Nothing matches that filter." : tab === "secrets" ? "No secrets here yet." : "Nothing deleted."}</p>
+      )}
+
+      {tab === "audit" && auditRows && (
+        <>
+          <p className="muted small">What the vault itself recorded in the last 30 days, newest first. Entries arrive a few minutes late.</p>
+          {auditRows.length === 0 ? (
+            <p className="empty">{filter ? "Nothing matches that filter." : "Nothing recorded."}</p>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Time</th>
+                  <th scope="col">Who</th>
+                  <th scope="col">Operation</th>
+                  <th scope="col">Secret</th>
+                  <th scope="col">Result</th>
+                  <th scope="col">From</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditRows.map((e, i) => (
+                  <tr key={i}>
+                    <td data-label="Time">{when(e.time, true)}</td>
+                    <td data-label="Who" className="name">
+                      {e.caller || "—"}
+                    </td>
+                    <td data-label="Operation" className="mono">
+                      {e.operation}
+                    </td>
+                    <td data-label="Secret" className="mono">
+                      {e.secret || "—"}
+                    </td>
+                    <td data-label="Result">
+                      <span className={e.result === "OK" ? "status on" : "status off"}>{e.result || "—"}</span>
+                    </td>
+                    <td data-label="From" className="muted mono">
+                      {e.ip || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
 
       {tab === "secrets" && rows && rows.length > 0 && (

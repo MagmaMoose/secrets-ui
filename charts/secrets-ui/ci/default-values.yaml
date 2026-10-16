@@ -10,6 +10,7 @@ providers:
     stores:
       - name: team-a-keyvault-dev
         label: Team A dev
+        resource_id: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-secrets/providers/Microsoft.KeyVault/vaults/team-a-keyvault-dev
       - name: team-a-keyvault-prd
 branding:
   accent: "#0b6e4f"

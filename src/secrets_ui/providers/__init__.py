@@ -20,6 +20,7 @@ ENABLE = "enable"
 CONTENT_TYPE = "content_type"
 RECOVER = "recover"
 VERSIONS = "versions"
+AUDIT = "audit"
 
 
 class ProviderError(Exception):
@@ -52,6 +53,19 @@ class Provider(ABC):
     def sign_in_scope(self) -> str:
         """The delegated scope its credential needs, asked for at sign-in. Empty for none."""
         return ""
+
+    @property
+    def audit_scope(self) -> str:
+        """The delegated scope that reads a store's audit log. Empty for none."""
+        return ""
+
+    def has_audit(self, store: str) -> bool:
+        return False
+
+    async def audit(self, store: str, token: str) -> list[dict[str, Any]]:
+        """The store's own record of what was done to its secrets, newest first: time, operation,
+        result, caller, ip and secret."""
+        raise ProviderError(400, "audit_not_supported", "This store has no audit log here.")
 
     @abstractmethod
     def stores(self, roles: Any) -> tuple[str, ...]:

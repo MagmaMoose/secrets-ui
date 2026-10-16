@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from secrets_ui.config import ConfigError, load_config
@@ -47,6 +49,19 @@ def test_store_labels_keep_the_listed_order(env):
 def test_a_broken_store_list_fails_startup(env, stores):
     with pytest.raises(ConfigError, match="SECRETS_UI_AZURE_KEYVAULT_STORES"):
         load_config({**env, "SECRETS_UI_AZURE_KEYVAULT_STORES": stores})
+
+
+@pytest.mark.parametrize(
+    "resource_id",
+    [
+        "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/other-kv",
+        "/subscriptions/x/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/a-kv",
+        "https://a-kv.vault.azure.net",
+    ],
+)
+def test_a_resource_id_must_name_the_same_vault(env, resource_id):
+    with pytest.raises(ConfigError, match="resource_id of a-kv"):
+        load_config({**env, "SECRETS_UI_AZURE_KEYVAULT_STORES": json.dumps([{"name": "a-kv", "resource_id": resource_id}])})
 
 
 def test_an_unknown_provider_fails_startup(env):
