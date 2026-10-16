@@ -18,13 +18,13 @@ def test_a_complete_config_loads(env):
     [
         ({"AZURE_TENANT_ID": "contoso.onmicrosoft.com"}, "AZURE_TENANT_ID"),
         ({"AZURE_CLIENT_ID": ""}, "AZURE_CLIENT_ID"),
-        ({"SECRETS_UI_PUBLIC_ORIGIN": "http://kv.example.test"}, "https"),
+        ({"SECRETS_UI_PUBLIC_ORIGIN": "http://kv.example.test"}, "https"),  # DevSkim: ignore DS137138 - asserts http is refused
         ({"SECRETS_UI_PUBLIC_ORIGIN": "https://kv.example.test/app"}, "no path"),
         ({"SECRETS_UI_SESSION_KEY": "short"}, "32"),
         ({"SECRETS_UI_AZURE_KEYVAULT_ROLES": "("}, "regular expression"),
         ({"SECRETS_UI_AZURE_KEYVAULT_SUFFIX": "not a host"}, "DNS suffix"),
         ({"SECRETS_UI_SESSION_HOURS": "48"}, "between 1 and 24"),
-        ({"AZURE_AUTHORITY_HOST": "http://login.example.test"}, "https host"),
+        ({"AZURE_AUTHORITY_HOST": "http://login.example.test"}, "https host"),  # DevSkim: ignore DS137138 - asserts http is refused
     ],
 )
 def test_unsafe_or_broken_values_fail_startup(env, change, message):
@@ -57,9 +57,9 @@ def test_the_origin_is_required(env):
         load_config(env)
 
 
-def test_http_is_allowed_on_localhost_only_and_then_cookies_are_not_secure(env):
-    cfg = load_config({**env, "SECRETS_UI_PUBLIC_ORIGIN": "http://localhost:8080"})
-    assert cfg.origin == "http://localhost:8080" and not cfg.secure_cookies
+def test_http_is_allowed_on_loopback_only_and_then_cookies_are_not_secure(env):
+    cfg = load_config({**env, "SECRETS_UI_PUBLIC_ORIGIN": "http://localhost:8080"})  # DevSkim: ignore DS162092
+    assert cfg.origin == "http://localhost:8080" and not cfg.secure_cookies  # DevSkim: ignore DS162092
 
 
 def test_the_session_key_can_come_from_a_file(env, tmp_path):

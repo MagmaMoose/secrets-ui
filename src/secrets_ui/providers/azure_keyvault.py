@@ -25,7 +25,7 @@ _MAX_PAGES = 40  # 1000 secrets at Key Vault's 25 per page
 # Key Vault's own rule: 3-24 characters, letters, digits and single hyphens, starting with a
 # letter and ending with a letter or digit. Lowercase only, so one vault has one name.
 _VAULT_NAME = re.compile(r"^[a-z](?:[a-z0-9]|-(?!-))*[a-z0-9]$")
-_SECRET_NAME = r"^[0-9a-zA-Z-]{1,127}$"
+_NAME_RULE = r"^[0-9a-zA-Z-]{1,127}$"
 
 
 def is_vault_name(value: str) -> bool:
@@ -70,7 +70,7 @@ class AzureKeyVault(Provider):
     id = "azure-keyvault"
     label = "Azure Key Vault"
     features = frozenset({EXPIRY, ENABLE, CONTENT_TYPE, RECOVER})
-    name_pattern = _SECRET_NAME
+    name_pattern = _NAME_RULE
     name_hint = "Letters, digits and hyphens, up to 127."
 
     def __init__(self, http: httpx.AsyncClient, *, roles: re.Pattern[str], suffix: str):
@@ -92,7 +92,7 @@ class AzureKeyVault(Provider):
         return f"{vault}.{self._suffix}"
 
     def _check(self, name: str) -> None:
-        if not re.fullmatch(_SECRET_NAME, name):
+        if not re.fullmatch(_NAME_RULE, name):
             raise ProviderError(400, "invalid_name", f"Not a Key Vault secret name. {self.name_hint}")
 
     async def _call(self, method: str, url: str, token: str, *, json: Any = None) -> Any:

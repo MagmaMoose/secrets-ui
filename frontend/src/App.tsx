@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, configure, type Me, type Store } from "./api";
 import { StoreView } from "./components/StoreView";
 
@@ -25,9 +25,10 @@ export function App() {
   const [authError] = useState(takeAuthError);
   const [route, setRoute] = useState(routeFromHash);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextToast = useRef(0);
 
   const notify = useCallback((message: string, kind: "info" | "error" = "info") => {
-    const id = Date.now() + Math.random();
+    const id = ++nextToast.current;
     setToasts((t) => [...t, { id, message, kind }]);
     if (kind === "info") window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000);
   }, []);

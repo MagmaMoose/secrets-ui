@@ -7,8 +7,8 @@ export default defineConfig({
   build: { outDir: "dist", sourcemap: false },
   server: {
     proxy: {
-      "/api": "http://localhost:8080",
-      "/auth": "http://localhost:8080",
+      "/api": "http://localhost:8080", // DevSkim: ignore DS162092 - the dev server's proxy to the local backend
+      "/auth": "http://localhost:8080", // DevSkim: ignore DS162092
     },
   },
 });

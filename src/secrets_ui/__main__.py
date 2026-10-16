@@ -38,7 +38,8 @@ def main() -> None:
     )
     uvicorn.run(
         create_app(cfg),
-        host="0.0.0.0",  # noqa: S104 - a container port, behind the ingress
+        # All interfaces: a container port, reached only through the ingress in front of it.
+        host="0.0.0.0",  # noqa: S104 # nosec B104
         port=cfg.port,
         # Longer than common ingress idle timeouts, so this side never closes a keep-alive
         # connection the proxy is about to reuse (a 502).

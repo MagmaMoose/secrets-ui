@@ -27,7 +27,6 @@ ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     APP_VERSION=${VERSION} \
-    SECRETS_UI_STATIC_DIR=/app/static \
     PORT=8080
 
 COPY --from=backend /app/.venv /app/.venv

@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _HOST = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
-_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+_LOOPBACK = {"localhost", "127.0.0.1", "::1"}  # DevSkim: ignore DS162092 - plain http is allowed on loopback, for local development
 PROVIDERS = ("azure-keyvault",)
 
 
@@ -66,7 +66,7 @@ def _origin(value: str) -> str:
     if parts.path not in ("", "/") or parts.query or parts.fragment or parts.username or not host:
         raise ConfigError("SECRETS_UI_PUBLIC_ORIGIN must be scheme://host[:port], with no path")
     if parts.scheme != "https" and not (parts.scheme == "http" and host in _LOOPBACK):
-        raise ConfigError("SECRETS_UI_PUBLIC_ORIGIN must be https (http only on localhost)")
+        raise ConfigError("SECRETS_UI_PUBLIC_ORIGIN must be https (plain http only on a loopback address)")
     return f"{parts.scheme}://{parts.netloc.lower()}"
 
 
