@@ -26,10 +26,18 @@ def test_sign_in_keeps_only_the_vaults_the_pattern_allows(client, world):
     # privileged-kv-prd is assigned as a role but outside the pattern; Not_A_Vault and admin are not vault names.
     assert [(s["provider"], s["name"]) for s in me["stores"]] == [("azure-keyvault", "team-a-kv-dev"), ("azure-keyvault", "team-b-kv-dev")]
     assert me["stores"][0]["location"] == "https://team-a-kv-dev.vault.azure.net"
+    assert me["stores"][0]["label"] == "team-a-kv-dev"
     (provider,) = me["providers"]
     assert provider["id"] == "azure-keyvault" and set(provider["features"]) == {"content_type", "enable", "expiry", "recover"}
     assert me["name"] == "Ada Lovelace"
     assert len(me["csrf"]) >= 32
+
+
+def test_listed_stores_come_first_in_their_order_under_their_label(world, env):
+    listed = '[{"name": "team-b-kv-dev", "label": "Team B dev"}, {"name": "privileged-kv-prd", "label": "Privileged"}]'
+    me = sign_in(make_client(world, {**env, "SECRETS_UI_AZURE_KEYVAULT_STORES": listed}), world)
+    # Listing privileged-kv-prd shows nothing: the roles and the pattern still decide.
+    assert [(s["name"], s["label"]) for s in me["stores"]] == [("team-b-kv-dev", "Team B dev"), ("team-a-kv-dev", "team-a-kv-dev")]
 
 
 def test_the_code_is_redeemed_with_the_workload_identity_token_and_the_pkce_verifier(client, world):

@@ -8,6 +8,7 @@ HashiCorp Vault mount) and runs secret operations there with that person's own c
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
@@ -36,6 +37,15 @@ class Provider(ABC):
     # A secret name the store accepts, as a regular expression the UI also checks, and in words.
     name_pattern: ClassVar[str]
     name_hint: ClassVar[str]
+
+    def __init__(self, labels: dict[str, str] | None = None):
+        # The operator's display names, {store: label}, in the order to show the stores in.
+        self.labels = dict(labels or {})
+
+    def arrange(self, stores: Iterable[str]) -> list[str]:
+        """The stores the operator listed first, in that order, then the rest by name."""
+        rank = {name: i for i, name in enumerate(self.labels)}
+        return sorted(stores, key=lambda s: (rank.get(s, len(rank)), s))
 
     @property
     def sign_in_scope(self) -> str:

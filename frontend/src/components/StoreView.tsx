@@ -127,7 +127,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
     <section className="vault" aria-labelledby="store-title">
       <div className="vault-head">
         <div>
-          <h1 id="store-title">{store.name}</h1>
+          <h1 id="store-title">{store.label}</h1>
           <p className="muted small mono">{store.location}</p>
         </div>
         <button type="button" className="button primary" onClick={() => setModal({ kind: "create" })}>

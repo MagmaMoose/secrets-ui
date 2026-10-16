@@ -7,7 +7,8 @@ export type Feature = "expiry" | "enable" | "content_type" | "recover";
 
 export type ProviderInfo = { id: string; label: string; features: Feature[]; name_pattern: string; name_hint: string };
 
-export type Store = { provider: string; name: string; location: string };
+// `label` is the operator's name for the store, or the store's own name.
+export type Store = { provider: string; name: string; label: string; location: string };
 
 export type Me = {
   name: string;

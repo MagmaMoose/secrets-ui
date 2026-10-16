@@ -32,6 +32,21 @@ def test_unsafe_or_broken_values_fail_startup(env, change, message):
         load_config({**env, **change})
 
 
+def test_store_labels_keep_the_listed_order(env):
+    cfg = load_config({**env, "SECRETS_UI_AZURE_KEYVAULT_STORES": '[{"name": "b-kv"}, {"name": "a-kv", "label": "A (dev)"}]'})
+    assert cfg.azure_keyvault is not None
+    assert list(cfg.azure_keyvault.labels.items()) == [("b-kv", "b-kv"), ("a-kv", "A (dev)")]
+
+
+@pytest.mark.parametrize(
+    "stores",
+    ["[{", '{"name": "a-kv"}', '[{"label": "A"}]', '[{"name": ""}]', '[{"name": "a-kv"}, {"name": "a-kv"}]', '[{"name": "a-kv", "label": 1}]', '[{"name": "a-kv", "label": "a\\nb"}]'],
+)
+def test_a_broken_store_list_fails_startup(env, stores):
+    with pytest.raises(ConfigError, match="SECRETS_UI_AZURE_KEYVAULT_STORES"):
+        load_config({**env, "SECRETS_UI_AZURE_KEYVAULT_STORES": stores})
+
+
 def test_an_unknown_provider_fails_startup(env):
     with pytest.raises(ConfigError, match="SECRETS_UI_PROVIDERS"):
         load_config({**env, "SECRETS_UI_PROVIDERS": "azure-keyvault,gcp-secret-manager"})

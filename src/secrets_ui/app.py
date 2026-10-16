@@ -85,7 +85,8 @@ def _log(event: str, **fields: Any) -> None:
 def build_providers(cfg: Config, http: httpx.AsyncClient) -> dict[str, Provider]:
     providers: dict[str, Provider] = {}
     if cfg.azure_keyvault is not None:
-        providers[AzureKeyVault.id] = AzureKeyVault(http, roles=cfg.azure_keyvault.roles, suffix=cfg.azure_keyvault.suffix)
+        kv = cfg.azure_keyvault
+        providers[AzureKeyVault.id] = AzureKeyVault(http, roles=kv.roles, suffix=kv.suffix, labels=kv.labels)
     return providers
 
 
@@ -277,9 +278,9 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
             "version": cfg.version,
             "providers": [p.describe() for p in providers.values()],
             "stores": [
-                {"provider": pid, "name": name, "location": providers[pid].location(name)}
-                for pid in providers
-                for name in stores.get(pid, [])
+                {"provider": pid, "name": name, "label": p.labels.get(name, name), "location": p.location(name)}
+                for pid, p in providers.items()
+                for name in p.arrange(stores.get(pid, []))
             ],
         }
 

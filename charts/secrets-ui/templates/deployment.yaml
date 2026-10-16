@@ -107,6 +107,10 @@ spec:
               value: {{ .roles | quote }}
             - name: SECRETS_UI_AZURE_KEYVAULT_SUFFIX
               value: {{ .suffix | quote }}
+            {{- with .stores }}
+            - name: SECRETS_UI_AZURE_KEYVAULT_STORES
+              value: {{ toJson . | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             - name: SECRETS_UI_SESSION_HOURS

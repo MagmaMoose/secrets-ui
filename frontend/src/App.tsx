@@ -123,7 +123,7 @@ export function App() {
                     .filter((s) => s.provider === p.id)
                     .map((s) => (
                       <option key={routeOf(s)} value={routeOf(s)}>
-                        {s.name}
+                        {s.label}
                       </option>
                     ))}
                 </optgroup>
@@ -138,8 +138,12 @@ export function App() {
                   <ul>
                     {stores.map((s) => (
                       <li key={routeOf(s)}>
-                        <a href={`#/${routeOf(s)}`} aria-current={routeOf(s) === route ? "page" : undefined}>
-                          {s.name}
+                        <a
+                          href={`#/${routeOf(s)}`}
+                          aria-current={routeOf(s) === route ? "page" : undefined}
+                          title={s.label === s.name ? undefined : s.name}
+                        >
+                          {s.label}
                         </a>
                       </li>
                     ))}
