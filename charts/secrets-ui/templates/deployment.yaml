@@ -1,0 +1,189 @@
+{{- $tenant := required "azure.tenantId is required" .Values.azure.tenantId }}
+{{- $client := required "azure.clientId is required" .Values.azure.clientId }}
+{{- $origin := required "config.publicOrigin is required, such as https://secrets.example.com" .Values.config.publicOrigin }}
+{{- if and (not .Values.azure.workloadIdentity.enabled) (not .Values.azure.clientSecret.existingSecret) }}
+{{- fail "set azure.workloadIdentity.enabled, or azure.clientSecret.existingSecret" }}
+{{- end }}
+{{- $providers := list }}
+{{- if .Values.providers.azureKeyVault.enabled }}{{ $providers = append $providers "azure-keyvault" }}{{ end }}
+{{- if not $providers }}
+{{- fail "enable at least one of providers.*" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "secrets-ui.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "secrets-ui.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "secrets-ui.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "secrets-ui.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "secrets-ui.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+      {{- else if .Values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ .Values.topologySpread.whenUnsatisfiable }}
+          {{- with .Values.topologySpread.nodeTaintsPolicy }}
+          nodeTaintsPolicy: {{ . }}
+          {{- end }}
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              {{- include "secrets-ui.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      containers:
+        - name: secrets-ui
+          image: {{ include "secrets-ui.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: AZURE_TENANT_ID
+              value: {{ $tenant | quote }}
+            - name: AZURE_CLIENT_ID
+              value: {{ $client | quote }}
+            {{- with .Values.azure.authorityHost }}
+            - name: AZURE_AUTHORITY_HOST
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.azure.workloadIdentity.enabled }}
+            - name: AZURE_FEDERATED_TOKEN_FILE
+              value: /var/run/secrets/azure/tokens/azure-identity-token
+            {{- else }}
+            # A mounted file rather than an env var: an environment variable is readable in
+            # /proc/<pid>/environ and inherited by child processes.
+            - name: AZURE_CLIENT_SECRET_FILE
+              value: /etc/secrets-ui/client/{{ .Values.azure.clientSecret.key }}
+            {{- end }}
+            - name: SECRETS_UI_PUBLIC_ORIGIN
+              value: {{ $origin | quote }}
+            - name: SECRETS_UI_PROVIDERS
+              value: {{ join "," $providers | quote }}
+            {{- with .Values.providers.azureKeyVault }}
+            {{- if .enabled }}
+            - name: SECRETS_UI_AZURE_KEYVAULT_ROLES
+              value: {{ .roles | quote }}
+            - name: SECRETS_UI_AZURE_KEYVAULT_SUFFIX
+              value: {{ .suffix | quote }}
+            {{- end }}
+            {{- end }}
+            - name: SECRETS_UI_SESSION_HOURS
+              value: {{ .Values.config.sessionHours | quote }}
+            - name: SECRETS_UI_SESSION_KEY_FILE
+              value: /etc/secrets-ui/session/{{ .Values.session.key }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: session
+              mountPath: /etc/secrets-ui/session
+              readOnly: true
+            {{- if .Values.azure.workloadIdentity.enabled }}
+            - name: azure-identity-token
+              mountPath: /var/run/secrets/azure/tokens
+              readOnly: true
+            {{- else }}
+            - name: client-secret
+              mountPath: /etc/secrets-ui/client
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: session
+          secret:
+            secretName: {{ include "secrets-ui.sessionSecret" . }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.session.key }}
+                path: {{ .Values.session.key }}
+        {{- if .Values.azure.workloadIdentity.enabled }}
+        # The service-account token Entra ID exchanges through the federated credential. The
+        # kubelet renews it in place before it expires; the app reads the file on every use.
+        - name: azure-identity-token
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: azure-identity-token
+                  audience: {{ .Values.azure.workloadIdentity.audience }}
+                  expirationSeconds: 3600
+        {{- else }}
+        - name: client-secret
+          secret:
+            secretName: {{ .Values.azure.clientSecret.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.azure.clientSecret.key }}
+                path: {{ .Values.azure.clientSecret.key }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

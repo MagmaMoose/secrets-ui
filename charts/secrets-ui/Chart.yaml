@@ -1,0 +1,35 @@
+apiVersion: v2
+name: secrets-ui
+description: A web UI for secret stores, starting with Azure Key Vault. People sign in with Entra ID, see the stores their app roles name, and every change runs as them under the store's own access control.
+type: application
+
+# version is the CHART version and appVersion the application version. The release
+# workflow publishes the chart at the release version with appVersion set to the release
+# tag, so these two are only what a local `helm install ./charts/secrets-ui` uses.
+# appVersion is the default image tag and keeps the leading "v" the image tags carry.
+version: 0.1.0
+appVersion: "v0.1.0"
+
+home: https://github.com/MagmaMoose/secrets-ui
+sources:
+  - https://github.com/MagmaMoose/secrets-ui
+keywords:
+  - azure
+  - key-vault
+  - secrets
+  - entra-id
+  - workload-identity
+maintainers:
+  - name: Caleb Sargeant
+    url: https://github.com/CalebSargeant
+
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: security
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/links: |
+    - name: Source
+      url: https://github.com/MagmaMoose/secrets-ui
+  artifacthub.io/changes: |
+    - kind: added
+      description: First release.
