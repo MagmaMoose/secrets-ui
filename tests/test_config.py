@@ -25,6 +25,8 @@ def test_a_complete_config_loads(env):
         ({"SECRETS_UI_AZURE_KEYVAULT_SUFFIX": "not a host"}, "DNS suffix"),
         ({"SECRETS_UI_SESSION_HOURS": "48"}, "between 1 and 24"),
         ({"AZURE_AUTHORITY_HOST": "http://login.example.test"}, "https host"),  # DevSkim: ignore DS137138 - asserts http is refused
+        ({"SECRETS_UI_BRAND_ACCENT": "red"}, "#rrggbb"),
+        ({"SECRETS_UI_BRAND_ACCENT_TEXT_DARK": "#fff;}body{display:none"}, "#rrggbb"),
     ],
 )
 def test_unsafe_or_broken_values_fail_startup(env, change, message):

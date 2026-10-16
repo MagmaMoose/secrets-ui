@@ -11,6 +11,10 @@ providers:
       - name: team-a-keyvault-dev
         label: Team A dev
       - name: team-a-keyvault-prd
+branding:
+  accent: "#0b6e4f"
+  accentText: "#ffffff"
+  accentDark: "#5fd3a8"
 image:
   digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
 ingress:

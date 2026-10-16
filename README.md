@@ -124,6 +124,8 @@ install and keeps it on upgrade (`session.existingSecret` to bring your own). Se
 | `SECRETS_UI_PUBLIC_ORIGIN` | | `https://host`, where people open the UI |
 | `SECRETS_UI_SESSION_KEY` / `_FILE` | | Seals the session cookie; 32+ characters, the same on every replica |
 | `SECRETS_UI_SESSION_HOURS` | `8` | Sign-in lifetime, 1 to 24 |
+| `SECRETS_UI_BRAND_ACCENT` / `_TEXT` | | Your colours as `#rrggbb`: the accent (buttons, links, the selected store, the logo) and the text on it |
+| `SECRETS_UI_BRAND_ACCENT_DARK` / `_TEXT_DARK` | the two above | The same for dark mode |
 | `SECRETS_UI_PROVIDERS` | `azure-keyvault` | Which providers to offer |
 | `SECRETS_UI_AZURE_KEYVAULT_ROLES` | `.+` | Pattern a role must match to count as a vault |
 | `SECRETS_UI_AZURE_KEYVAULT_SUFFIX` | `vault.azure.net` | Key Vault DNS suffix |

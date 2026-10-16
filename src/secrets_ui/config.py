@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _HOST = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
+_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}  # DevSkim: ignore DS162092 - plain http is allowed on loopback, for local development
 PROVIDERS = ("azure-keyvault",)
 
@@ -33,6 +34,16 @@ class AzureKeyVaultConfig:
 
 
 @dataclass(frozen=True)
+class Branding:
+    """Colours as #rrggbb; empty keeps the default. The dark ones fall back to the light ones."""
+
+    accent: str = ""
+    accent_text: str = ""
+    accent_dark: str = ""
+    accent_text_dark: str = ""
+
+
+@dataclass(frozen=True)
 class Config:
     tenant_id: str
     client_id: str
@@ -47,6 +58,7 @@ class Config:
     port: int = 8080
     version: str = "dev"
     providers: tuple[str, ...] = field(default=PROVIDERS)
+    branding: Branding = field(default_factory=Branding)
 
     @property
     def redirect_uri(self) -> str:
@@ -157,6 +169,13 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         raise ConfigError("SECRETS_UI_PUBLIC_ORIGIN is required, such as https://secrets.example.com")
     static = env.get("SECRETS_UI_STATIC_DIR", "/app/static")
 
+    colours = {}
+    for key in ("accent", "accent_text", "accent_dark", "accent_text_dark"):
+        name = f"SECRETS_UI_BRAND_{key.upper()}"
+        colours[key] = env.get(name, "").strip().lower()
+        if colours[key] and not _COLOUR.match(colours[key]):
+            raise ConfigError(f"{name} must be a colour as #rrggbb, such as #4f46e5")
+
     return Config(
         tenant_id=_guid(env, "AZURE_TENANT_ID"),
         client_id=_guid(env, "AZURE_CLIENT_ID"),
@@ -171,4 +190,5 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         port=port,
         version=env.get("APP_VERSION", "dev"),
         providers=providers,
+        branding=Branding(**colours),
     )

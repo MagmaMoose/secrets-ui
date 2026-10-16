@@ -24,6 +24,21 @@ def test_list_secrets_as_the_signed_in_person(client, world):
     assert all(c.headers["authorization"] == "Bearer at-1" for c in calls)
 
 
+def test_the_theme_carries_the_operators_colours(world, env):
+    client = make_client(world, {**env, "SECRETS_UI_BRAND_ACCENT": "#1D4ED8", "SECRETS_UI_BRAND_ACCENT_TEXT": "#ffffff", "SECRETS_UI_BRAND_ACCENT_DARK": "#93b4ff"})
+    response = client.get("/theme.css")
+    assert response.status_code == 200 and response.headers["content-type"].startswith("text/css")
+    assert "default-src 'none'" in response.headers["content-security-policy"]
+    light, dark = response.text.splitlines()
+    assert light.startswith("html:root{--accent:#1d4ed8;") and "--accent-text:#ffffff" in light
+    assert dark.startswith("@media (prefers-color-scheme: dark){html:root{--accent:#93b4ff;") and "--accent-text:#ffffff" in dark
+
+
+def test_without_colours_the_theme_is_empty(client):
+    response = client.get("/theme.css")
+    assert response.status_code == 200 and response.text == ""
+
+
 def test_an_unknown_provider_is_not_found(client, world):
     sign_in(client, world)
     assert client.get("/api/stores/gcp/team-a-kv-dev/secrets").status_code == 404

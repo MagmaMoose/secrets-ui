@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from .config import Config
+from .config import Branding, Config
 from .entra import Entra, EntraError
 from .providers import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, Provider, ProviderError
 from .providers.azure_keyvault import AzureKeyVault
@@ -48,6 +48,18 @@ CSP = "; ".join(
         "frame-ancestors 'none'",
     ]
 )
+
+
+def theme_css(brand: Branding) -> str:
+    """The operator's colours over styles.css, whose `:root` loses to `html:root` in any order."""
+
+    def rules(accent: str, text: str, soft: int) -> str:
+        found = [f"--accent:{accent}", f"--accent-soft:color-mix(in srgb,{accent} {soft}%,var(--surface))"] if accent else []
+        return ";".join(found + ([f"--accent-text:{text}"] if text else []))
+
+    light = rules(brand.accent, brand.accent_text, 10)
+    dark = rules(brand.accent_dark or brand.accent, brand.accent_text_dark or brand.accent_text, 14)
+    return (f"html:root{{{light}}}\n" if light else "") + (f"@media (prefers-color-scheme: dark){{html:root{{{dark}}}}}\n" if dark else "")
 
 
 def _expiry(value: datetime | None) -> int | None:
@@ -211,6 +223,12 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    theme = theme_css(cfg.branding)
+
+    @app.get("/theme.css")
+    async def theme_stylesheet() -> Response:
+        return Response(theme, media_type="text/css")
 
     @app.get("/auth/login")
     async def login() -> Response:
