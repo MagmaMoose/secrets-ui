@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
 // The native <dialog>: focus trap, Escape and the backdrop come with it.
-export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Dialog({ title, wide, onClose, children }: { title: string; wide?: boolean; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
 
   // No close() on unmount: React removing the element takes it out of the top layer, and a
@@ -15,7 +15,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
   }, []);
 
   return (
-    <dialog ref={ref} className="dialog" aria-labelledby="dialog-title" onClose={onClose} onCancel={onClose}>
+    <dialog ref={ref} className={wide ? "dialog wide" : "dialog"} aria-labelledby="dialog-title" onClose={onClose} onCancel={onClose}>
       <header className="dialog-header">
         <h2 id="dialog-title">{title}</h2>
         <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>

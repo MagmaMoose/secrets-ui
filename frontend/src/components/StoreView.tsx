@@ -363,7 +363,17 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
           onClose={() => setModal(null)}
         />
       )}
-      {modal?.kind === "versions" && <Versions store={store} name={modal.secret.name} expiry={has("expiry")} enable={has("enable")} onClose={() => setModal(null)} />}
+      {modal?.kind === "versions" && <Versions
+          store={store}
+          name={modal.secret.name}
+          expiry={has("expiry")}
+          enable={has("enable")}
+          onRestored={(version) => {
+            notify(`Version ${version.slice(0, 8)} of ${modal.secret.name} is current again.`);
+            void load();
+          }}
+          onClose={() => setModal(null)}
+        />}
       {modal?.kind === "expiry" && (
         <ExpiryForm
           secret={modal.secret}

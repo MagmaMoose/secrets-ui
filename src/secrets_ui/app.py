@@ -96,6 +96,10 @@ class Version(BaseModel):
     version: str = Field(default="", max_length=64)
 
 
+class Restore(BaseModel):
+    version: str = Field(min_length=1, max_length=64)
+
+
 def _log(event: str, **fields: Any) -> None:
     log.info(json.dumps({"msg": event, **fields}))
 
@@ -435,6 +439,14 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         found = provider_for(provider, store, data)
         require(found, VERSIONS)
         return {"versions": await call(data, found, found.list_versions, store, name)}
+
+    @app.post(f"{base}/secrets/{{name:path}}/restore")
+    async def restore(provider: ProviderId, store: StoreName, name: SecretName, body: Restore, data: Writable) -> dict[str, Any]:
+        found = provider_for(provider, store, data)
+        require(found, VERSIONS)
+        await call(data, found, found.restore, store, name, body.version)
+        _log("secret version restored", user=data.get("oid"), provider=provider, store=store, secret=name, version=body.version)
+        return {"name": name}
 
     if cfg.static_dir is not None:
         app.mount("/", StaticFiles(directory=cfg.static_dir, html=True), name="frontend")

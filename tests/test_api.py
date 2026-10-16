@@ -175,6 +175,23 @@ def test_older_versions_are_listed_newest_first_and_revealed_one_at_a_time(clien
     assert bad.status_code == 400 and world.vault_requests()[-1].url.path == f"/secrets/db-password/{old}"
 
 
+def test_an_older_version_is_restored_as_a_new_current_one(client, world, caplog):
+    me = sign_in(client, world)
+    vault = world.vaults["team-a-kv-dev"]
+    base = "/api/stores/azure-keyvault/team-a-kv-dev/secrets/db-password"
+    assert client.post(f"{base}/versions", headers=write_headers(me), json={"value": "rotated", "content_type": "text/x-new"}).status_code == 201
+    old = client.get(f"{base}/versions").json()["versions"][1]["version"]
+    assert client.post(f"{base}/restore", json={"version": old}).status_code == 403
+    with caplog.at_level(logging.INFO):
+        response = client.post(f"{base}/restore", headers=write_headers(me), json={"version": old})
+    assert response.status_code == 200, response.text
+    assert vault.secrets["db-password"]["value"] == "s3cr3t-db" and vault.secrets["db-password"]["version"] == 3
+    assert vault.secrets["db-password"]["contentType"] == "text/plain"
+    assert "s3cr3t" not in caplog.text and "secret version restored" in caplog.text
+    assert client.post(f"{base}/restore", headers=write_headers(me), json={"version": ""}).status_code == 422
+    assert client.post(f"{base}/restore", headers=write_headers(me), json={"version": "../x"}).json()["error"] == "invalid_version"
+
+
 def test_the_audit_log_is_the_vaults_own_read_with_the_persons_token(world, env):
     client = make_client(world, {**env, **WITH_AUDIT})
     me = sign_in(client, world)

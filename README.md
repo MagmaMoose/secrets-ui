@@ -14,7 +14,7 @@ What you can do in a vault:
 - disable and enable a secret
 - delete (soft delete) and recover; purging is left out on purpose
 - reveal a value, after an explicit click, for a minute
-- list a secret's earlier versions and reveal one the same way
+- list a secret's earlier versions, reveal one the same way, or make one current again
 - read the vault's own audit log: who read or changed which secret, when, and from where
 
 ## How it works

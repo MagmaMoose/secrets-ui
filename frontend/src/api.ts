@@ -120,6 +120,7 @@ export const api = {
   reveal: (store: Store, name: string) => request<{ value: string }>("POST", `${one(store, name)}/reveal`).then((r) => r.value),
   audit: (store: Store) => request<{ events: AuditEvent[] }>("GET", `${at(store)}/audit`).then((r) => r.events),
   versions: (store: Store, name: string) => request<{ versions: SecretVersion[] }>("GET", `${one(store, name)}/versions`).then((r) => r.versions),
+  restore: (store: Store, name: string, version: string) => request<unknown>("POST", `${one(store, name)}/restore`, { version }),
   revealVersion: (store: Store, name: string, version: string) =>
     request<{ value: string }>("POST", `${one(store, name)}/reveal`, { version }).then((r) => r.value),
 };
