@@ -6,10 +6,12 @@ request: a pod in CrashLoopBackOff with the reason in its log is found in minute
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -26,6 +28,8 @@ class ConfigError(ValueError):
 class AzureKeyVaultConfig:
     roles: re.Pattern[str]
     suffix: str = "vault.azure.net"
+    # {vault: label}, in the order to show the vaults in.
+    labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,27 @@ def _pattern(env: dict[str, str], name: str) -> re.Pattern[str]:
         raise ConfigError(f"{name} is not a valid regular expression: {err}") from err
 
 
+def _stores(env: dict[str, str], name: str) -> list[dict[str, Any]]:
+    """NAME as a JSON list of stores, each {"name": ..., "label": ...}, in the order to show them in."""
+    raw = env.get(name, "").strip()
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+    except ValueError as err:
+        raise ConfigError(f"{name} is not valid JSON: {err}") from err
+    if not isinstance(items, list) or not all(isinstance(i, dict) and isinstance(i.get("name"), str) and i["name"] for i in items):
+        raise ConfigError(f'{name} must be a JSON list such as [{{"name": "team-a-keyvault-dev", "label": "Team A dev"}}]')
+    names = [i["name"] for i in items]
+    if len(set(names)) != len(names):
+        raise ConfigError(f"{name} lists a store twice")
+    for item in items:
+        label = item.get("label", "")
+        if not isinstance(label, str) or len(label) > 64 or not label.isprintable():
+            raise ConfigError(f"{name}: the label of {item['name']} must be text of at most 64 characters")
+    return items
+
+
 def load_config(env: dict[str, str] | None = None) -> Config:
     env = dict(os.environ if env is None else env)
 
@@ -117,7 +142,8 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         suffix = env.get("SECRETS_UI_AZURE_KEYVAULT_SUFFIX", "vault.azure.net").strip().lower()
         if not _HOST.match(suffix):
             raise ConfigError("SECRETS_UI_AZURE_KEYVAULT_SUFFIX must be a DNS suffix, such as vault.azure.net")
-        azure_keyvault = AzureKeyVaultConfig(roles=_pattern(env, "SECRETS_UI_AZURE_KEYVAULT_ROLES"), suffix=suffix)
+        labels = {s["name"]: s.get("label") or s["name"] for s in _stores(env, "SECRETS_UI_AZURE_KEYVAULT_STORES")}
+        azure_keyvault = AzureKeyVaultConfig(roles=_pattern(env, "SECRETS_UI_AZURE_KEYVAULT_ROLES"), suffix=suffix, labels=labels)
 
     try:
         hours = int(env.get("SECRETS_UI_SESSION_HOURS", "8"))

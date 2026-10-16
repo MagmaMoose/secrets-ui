@@ -7,6 +7,10 @@ config:
 providers:
   azureKeyVault:
     roles: "^team-[a-z]+-keyvault-(dev|prd)$"
+    stores:
+      - name: team-a-keyvault-dev
+        label: Team A dev
+      - name: team-a-keyvault-prd
 image:
   digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
 ingress:

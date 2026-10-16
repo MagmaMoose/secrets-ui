@@ -127,6 +127,7 @@ install and keeps it on upgrade (`session.existingSecret` to bring your own). Se
 | `SECRETS_UI_PROVIDERS` | `azure-keyvault` | Which providers to offer |
 | `SECRETS_UI_AZURE_KEYVAULT_ROLES` | `.+` | Pattern a role must match to count as a vault |
 | `SECRETS_UI_AZURE_KEYVAULT_SUFFIX` | `vault.azure.net` | Key Vault DNS suffix |
+| `SECRETS_UI_AZURE_KEYVAULT_STORES` | | How vaults show, as JSON: `[{"name": "team-a-keyvault-dev", "label": "team-a-dev"}]`. Listed vaults come first, in this order, under their label; the rest follow by name. It grants nothing |
 
 ## Develop
 

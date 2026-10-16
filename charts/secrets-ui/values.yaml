@@ -48,6 +48,11 @@ providers:
     roles: ".+"
     # The Key Vault DNS suffix: vault.azure.net, or a sovereign cloud's.
     suffix: vault.azure.net
+    # How vaults show in the UI. Listed vaults come first, in this order, under their label
+    # (default: the vault name); the rest follow by name. Listing a vault grants nobody access.
+    stores: []
+    #  - name: team-a-keyvault-dev
+    #    label: team-a-dev
 
 session:
   # A Secret holding the key that seals session cookies (at least 32 characters), shared by

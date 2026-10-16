@@ -73,7 +73,8 @@ class AzureKeyVault(Provider):
     name_pattern = _NAME_RULE
     name_hint = "Letters, digits and hyphens, up to 127."
 
-    def __init__(self, http: httpx.AsyncClient, *, roles: re.Pattern[str], suffix: str):
+    def __init__(self, http: httpx.AsyncClient, *, roles: re.Pattern[str], suffix: str, labels: dict[str, str] | None = None):
+        super().__init__(labels)
         self._http = http
         self._roles = roles
         self._suffix = suffix
