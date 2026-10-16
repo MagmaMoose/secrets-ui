@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
-    from ..entra import Entra
+    from ..oidc import OIDC
 
 # What a provider can do beyond list, reveal, create, add a version and delete.
 EXPIRY = "expiry"
@@ -87,10 +87,10 @@ class Provider(ABC):
     def location(self, store: str) -> str:
         """Where a store lives, shown under its name."""
 
-    async def credential(self, entra: Entra, refresh_token: str) -> tuple[str, float]:
+    async def credential(self, idp: OIDC, refresh_token: str) -> tuple[str, float]:
         """The person's credential for this provider and when it expires. By default an Entra ID
         access token for `sign_in_scope`; a provider with its own token exchange overrides this."""
-        return await entra.refresh(refresh_token, scope=self.sign_in_scope)
+        return await idp.refresh(refresh_token, scope=self.sign_in_scope)
 
     @abstractmethod
     async def list_secrets(self, store: str, token: str) -> list[dict[str, Any]]: ...

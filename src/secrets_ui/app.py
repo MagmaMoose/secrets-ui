@@ -24,8 +24,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from .config import Branding, Config
-from .entra import Entra, EntraError
+from .entra import Entra
 from .examples import external_secret
+from .google import Google
+from .oidc import SignInError
 from .providers import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, VERSIONS, Provider, ProviderError
 from .providers.azure_keyvault import AzureKeyVault
 from .providers.hashicorp_vault import HashiCorpVault, VaultStore
@@ -135,7 +137,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
     # Entra ID issues a token for one resource per request: the first provider that needs one
     # gets it at sign-in, the rest redeem the refresh token when they are first used.
     first = next((p for p in providers.values() if p.sign_in_scope), None)
-    entra = Entra(cfg, http, scope=first.sign_in_scope if first else "")
+    idp = Entra(cfg, http, scope=first.sign_in_scope if first else "") if cfg.sign_in == "entra" else Google(cfg, http)
     cookies = Cookies(Sealer(cfg.session_key), secure=cfg.secure_cookies)
     tokens = TokenCache()
 
@@ -226,8 +228,8 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         token = None if fresh else tokens.get(key)
         if token is None:
             try:
-                token, expires_at = await found.credential(entra, str(data["rt"]))
-            except EntraError as err:
+                token, expires_at = await found.credential(idp, str(data["rt"]))
+            except SignInError as err:
                 _log("credential failed", user=data.get("oid"), provider=found.id, status=err.status, reason=str(err))
                 signed_out = err.status == 401
                 raise HTTPException(401 if signed_out else 502, "signed_out" if signed_out else "sign_in_unavailable") from err
@@ -254,8 +256,8 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         token = None if fresh else tokens.get(key)
         if token is None:
             try:
-                token, expires_at = await entra.refresh(str(data["rt"]), scope=found.audit_scope)
-            except EntraError as err:
+                token, expires_at = await idp.refresh(str(data["rt"]), scope=found.audit_scope)
+            except SignInError as err:
                 _log("audit credential failed", user=data.get("oid"), provider=found.id, status=err.status, reason=str(err))
                 # Not a sign-out: without consent for the log API, the stores themselves still work.
                 raise ProviderError(403, "audit_unavailable", f"No access to the audit log. {err}") from err
@@ -274,10 +276,15 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
     async def theme_stylesheet() -> Response:
         return Response(theme, media_type="text/css")
 
+    @app.get("/auth/provider")
+    async def sign_in_provider() -> dict[str, str]:
+        # Public: the sign-in page names the button before anyone is signed in.
+        return {"id": cfg.sign_in, "name": idp.name}
+
     @app.get("/auth/login")
     async def login() -> Response:
         state, nonce, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(32), secrets.token_urlsafe(64)
-        response = RedirectResponse(entra.authorize_url(state=state, nonce=nonce, verifier=verifier), 302)
+        response = RedirectResponse(idp.authorize_url(state=state, nonce=nonce, verifier=verifier), 302)
         cookies.write_login(response, {"state": state, "nonce": nonce, "verifier": verifier}, LOGIN_SECONDS)
         return response
 
@@ -297,8 +304,8 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         if flow is None or not hmac.compare_digest(params.get("state", "").encode(), str(flow.get("state", "")).encode()):
             return _back(auth_error="This sign-in expired or was not started here. Sign in again.")
         try:
-            sign_in = await entra.redeem_code(code=params.get("code", ""), verifier=str(flow["verifier"]), nonce=str(flow["nonce"]))
-        except EntraError as err:
+            sign_in = await idp.redeem_code(code=params.get("code", ""), verifier=str(flow["verifier"]), nonce=str(flow["nonce"]))
+        except SignInError as err:
             _log("sign-in failed", status=err.status, reason=str(err))
             return _back(auth_error=str(err))
 

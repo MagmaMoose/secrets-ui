@@ -1,9 +1,9 @@
 # secrets-ui
 
 A small web UI for managing secrets in the stores you already use, without the cloud portal.
-People sign in with Entra ID, see only the stores their app roles name, and every read or
-change runs **as them**: the store's own access control decides what they may do, and its
-audit log names the person, not the app.
+People sign in with Entra ID or Google Workspace, see only the stores their roles or groups
+name, and every read or change runs **as them**: the store's own access control decides what
+they may do, and its audit log names the person, not the app.
 
 Two providers: **Azure Key Vault**, and **HashiCorp Vault** (KV v2), on their own or together.
 
@@ -140,6 +140,27 @@ Then set `SECRETS_UI_PROVIDERS=azure-keyvault,hashicorp-vault` (or just `hashico
 store names out of `SECRETS_UI_AZURE_KEYVAULT_ROLES`. On Kubernetes, a Vault on a private
 address needs `networkPolicy.extraEgress`.
 
+## Sign in with Google
+
+With `SECRETS_UI_SIGN_IN=google`, people sign in with their Google Workspace account instead of
+Entra ID. Azure Key Vault takes Entra ID tokens only, so it is off then; HashiCorp Vault works.
+
+1. In a Google Cloud project of your organisation, set the OAuth consent screen to Internal and
+   enable the Cloud Identity API.
+2. Create an OAuth client of type Web application, with the redirect URI
+   `https://<your host>/auth/callback`: `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+3. Set `SECRETS_UI_GOOGLE_DOMAINS` to your Workspace domains. Only an account whose verified
+   `hd` claim names one of them gets in.
+4. Stores come from Google Groups: a group in one of those domains whose name is a store name,
+   such as `team-a-vault-dev@example.com`, gives its direct members that store. The app reads a
+   person's groups once at sign-in, with their own token (`cloud-identity.groups.readonly`).
+
+Google hands out a refresh token only on consent, so every sign-in asks for it. For HashiCorp
+Vault, the JWT auth mount trusts Google instead: `oidc_discovery_url` and `bound_issuer`
+`https://accounts.google.com`, the role's `bound_audiences` the OAuth client id, `user_claim=email`
+and `bound_claims` on `hd`. Google ID tokens carry no groups: let Vault fetch them with its
+Google `provider_config` (`fetch_groups`), or give the role its policies directly.
+
 ## Show a vault's audit log
 
 Optional, per vault. The log is the vault's own `AuditEvent` records, read through the Log
@@ -177,17 +198,21 @@ install and keeps it on upgrade (`session.existingSecret` to bring your own). Se
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `SECRETS_UI_SIGN_IN` | `entra` | Who people sign in with: `entra` or `google` |
 | `AZURE_TENANT_ID` | | Entra ID tenant (GUID) |
 | `AZURE_CLIENT_ID` | | The app registration |
 | `AZURE_FEDERATED_TOKEN_FILE` | | Workload identity token file (the app's credential) |
 | `AZURE_CLIENT_SECRET` / `_FILE` | | Or a client secret |
 | `AZURE_AUTHORITY_HOST` | `https://login.microsoftonline.com` | Another cloud's sign-in host |
+| `GOOGLE_CLIENT_ID` | | With Google: the OAuth client id |
+| `GOOGLE_CLIENT_SECRET` / `_FILE` | | With Google: its client secret |
+| `SECRETS_UI_GOOGLE_DOMAINS` | | With Google: the Workspace domains whose accounts may sign in |
 | `SECRETS_UI_PUBLIC_ORIGIN` | | `https://host`, where people open the UI |
 | `SECRETS_UI_SESSION_KEY` / `_FILE` | | Seals the session cookie; 32+ characters, the same on every replica |
 | `SECRETS_UI_SESSION_HOURS` | `8` | Sign-in lifetime, 1 to 24 |
 | `SECRETS_UI_BRAND_ACCENT` / `_TEXT` | | Your colours as `#rrggbb`: the accent (buttons, links, the selected store, the logo) and the text on it |
 | `SECRETS_UI_BRAND_ACCENT_DARK` / `_TEXT_DARK` | the two above | The same for dark mode |
-| `SECRETS_UI_PROVIDERS` | `azure-keyvault` | Which providers to offer: `azure-keyvault`, `hashicorp-vault` or both |
+| `SECRETS_UI_PROVIDERS` | `azure-keyvault` (none with Google) | Which providers to offer: `azure-keyvault`, `hashicorp-vault` or both |
 | `SECRETS_UI_AZURE_KEYVAULT_ROLES` | `.+` | Pattern a role must match to count as a vault |
 | `SECRETS_UI_AZURE_KEYVAULT_SUFFIX` | `vault.azure.net` | Key Vault DNS suffix |
 | `SECRETS_UI_HASHICORP_VAULT_ADDR` | | `https://vault.example.com:8200` |

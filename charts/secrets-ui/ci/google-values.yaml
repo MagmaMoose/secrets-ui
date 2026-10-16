@@ -1,0 +1,17 @@
+# Google Workspace sign-in with HashiCorp Vault, for CI's lint and render.
+signIn: google
+google:
+  clientId: 1234-abc.apps.googleusercontent.com
+  clientSecret:
+    existingSecret: secrets-ui-google
+  domains: [example.com]
+config:
+  publicOrigin: https://secrets.example.com
+providers:
+  hashicorpVault:
+    enabled: true
+    address: https://vault.example.com:8200
+    stores:
+      - name: team-a-vault-dev
+        mount: secret
+        path: dev/team-a

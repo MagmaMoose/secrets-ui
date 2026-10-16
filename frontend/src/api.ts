@@ -62,7 +62,7 @@ const MESSAGES: Record<string, string> = {
   csrf: "This page is out of date. Reload it and try again.",
   store_not_allowed: "Your account has no role for this store.",
   exists: "A secret with this name already exists. Add a new version instead.",
-  sign_in_unavailable: "Microsoft sign-in did not answer. Try again in a moment.",
+  sign_in_unavailable: "Sign-in did not answer. Try again in a moment.",
   invalid_request: "Some fields are not valid.",
 };
 
@@ -108,6 +108,7 @@ export type SecretBody = { value: string; content_type?: string; expires?: strin
 
 export const api = {
   me: () => request<Me>("GET", "/api/me"),
+  signInProvider: () => request<{ id: "entra" | "google"; name: string }>("GET", "/auth/provider"),
   logout: () => request<unknown>("POST", "/auth/logout"),
   secrets: (store: Store) => request<{ secrets: Secret[] }>("GET", `${at(store)}/secrets`).then((r) => r.secrets),
   deleted: (store: Store) => request<{ secrets: DeletedSecret[] }>("GET", `${at(store)}/deleted`).then((r) => r.secrets),

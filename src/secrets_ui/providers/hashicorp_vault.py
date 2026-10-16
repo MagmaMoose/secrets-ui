@@ -29,7 +29,7 @@ import httpx
 from . import RECOVER, VERSIONS, Provider, ProviderError
 
 if TYPE_CHECKING:
-    from ..entra import Entra
+    from ..oidc import OIDC
 
 # A path segment Vault and a URL agree on; "." and ".." would walk out of the store's folder.
 _SEGMENT = r"(?!\.\.?(?:/|$))[A-Za-z0-9._-]{1,128}"
@@ -87,8 +87,8 @@ class HashiCorpVault(Provider):
         self._auth_role = auth_role
         self._stores = dict(stores)
 
-    async def credential(self, entra: Entra, refresh_token: str) -> tuple[str, float]:
-        id_token, _ = await entra.id_token(refresh_token)
+    async def credential(self, idp: OIDC, refresh_token: str) -> tuple[str, float]:
+        id_token, _ = await idp.id_token(refresh_token)
         body = await self._call("POST", self._api("auth", *self._auth_mount.split("/"), "login"), "", json={"role": self._auth_role, "jwt": id_token})
         auth = body.get("auth") or {}
         if not auth.get("client_token"):

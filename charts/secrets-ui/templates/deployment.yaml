@@ -1,11 +1,22 @@
-{{- $tenant := required "azure.tenantId is required" .Values.azure.tenantId }}
-{{- $client := required "azure.clientId is required" .Values.azure.clientId }}
 {{- $origin := required "config.publicOrigin is required, such as https://secrets.example.com" .Values.config.publicOrigin }}
+{{- $entra := eq .Values.signIn "entra" }}
+{{- if $entra }}
+{{- $_ := required "azure.tenantId is required" .Values.azure.tenantId }}
+{{- $_ := required "azure.clientId is required" .Values.azure.clientId }}
 {{- if and (not .Values.azure.workloadIdentity.enabled) (not .Values.azure.clientSecret.existingSecret) }}
 {{- fail "set azure.workloadIdentity.enabled, or azure.clientSecret.existingSecret" }}
 {{- end }}
+{{- else if eq .Values.signIn "google" }}
+{{- $_ := required "google.clientId is required" .Values.google.clientId }}
+{{- $_ := required "google.clientSecret.existingSecret is required" .Values.google.clientSecret.existingSecret }}
+{{- if not .Values.google.domains }}
+{{- fail "google.domains must list the Workspace domains whose accounts may sign in" }}
+{{- end }}
+{{- else }}
+{{- fail "signIn takes entra or google" }}
+{{- end }}
 {{- $providers := list }}
-{{- if .Values.providers.azureKeyVault.enabled }}{{ $providers = append $providers "azure-keyvault" }}{{ end }}
+{{- if and $entra .Values.providers.azureKeyVault.enabled }}{{ $providers = append $providers "azure-keyvault" }}{{ end }}
 {{- $vault := .Values.providers.hashicorpVault }}
 {{- if $vault.enabled }}
 {{- $providers = append $providers "hashicorp-vault" }}
@@ -93,10 +104,13 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
+            - name: SECRETS_UI_SIGN_IN
+              value: {{ .Values.signIn | quote }}
+            {{- if $entra }}
             - name: AZURE_TENANT_ID
-              value: {{ $tenant | quote }}
+              value: {{ .Values.azure.tenantId | quote }}
             - name: AZURE_CLIENT_ID
-              value: {{ $client | quote }}
+              value: {{ .Values.azure.clientId | quote }}
             {{- with .Values.azure.authorityHost }}
             - name: AZURE_AUTHORITY_HOST
               value: {{ . | quote }}
@@ -110,12 +124,20 @@ spec:
             - name: AZURE_CLIENT_SECRET_FILE
               value: /etc/secrets-ui/client/{{ .Values.azure.clientSecret.key }}
             {{- end }}
+            {{- else }}
+            - name: GOOGLE_CLIENT_ID
+              value: {{ .Values.google.clientId | quote }}
+            - name: GOOGLE_CLIENT_SECRET_FILE
+              value: /etc/secrets-ui/client/{{ .Values.google.clientSecret.key }}
+            - name: SECRETS_UI_GOOGLE_DOMAINS
+              value: {{ join "," .Values.google.domains | quote }}
+            {{- end }}
             - name: SECRETS_UI_PUBLIC_ORIGIN
               value: {{ $origin | quote }}
             - name: SECRETS_UI_PROVIDERS
               value: {{ join "," $providers | quote }}
             {{- with .Values.providers.azureKeyVault }}
-            {{- if .enabled }}
+            {{- if and $entra .enabled }}
             - name: SECRETS_UI_AZURE_KEYVAULT_ROLES
               value: {{ .roles | quote }}
             - name: SECRETS_UI_AZURE_KEYVAULT_SUFFIX
@@ -172,7 +194,7 @@ spec:
             - name: session
               mountPath: /etc/secrets-ui/session
               readOnly: true
-            {{- if .Values.azure.workloadIdentity.enabled }}
+            {{- if and $entra .Values.azure.workloadIdentity.enabled }}
             - name: azure-identity-token
               mountPath: /var/run/secrets/azure/tokens
               readOnly: true
@@ -197,7 +219,7 @@ spec:
             items:
               - key: {{ .Values.session.key }}
                 path: {{ .Values.session.key }}
-        {{- if .Values.azure.workloadIdentity.enabled }}
+        {{- if and $entra .Values.azure.workloadIdentity.enabled }}
         # The service-account token Entra ID exchanges through the federated credential. The
         # kubelet renews it in place before it expires; the app reads the file on every use.
         - name: azure-identity-token
@@ -209,13 +231,14 @@ spec:
                   audience: {{ .Values.azure.workloadIdentity.audience }}
                   expirationSeconds: 3600
         {{- else }}
+        {{- $secret := ternary .Values.azure.clientSecret .Values.google.clientSecret $entra }}
         - name: client-secret
           secret:
-            secretName: {{ .Values.azure.clientSecret.existingSecret }}
+            secretName: {{ $secret.existingSecret }}
             defaultMode: 0440
             items:
-              - key: {{ .Values.azure.clientSecret.key }}
-                path: {{ .Values.azure.clientSecret.key }}
+              - key: {{ $secret.key }}
+                path: {{ $secret.key }}
         {{- end }}
         {{- if and $vault.enabled $vault.caBundle }}
         - name: vault-ca

@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           required="--set azure.tenantId=11111111-2222-3333-4444-555555555555 --set azure.clientId=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --set config.publicOrigin=https://secrets.example.com"
-          for values in "$required" "--values charts/secrets-ui/ci/default-values.yaml"; do
+          for values in "$required" "--values charts/secrets-ui/ci/default-values.yaml" "--values charts/secrets-ui/ci/google-values.yaml"; do
             # shellcheck disable=SC2086
             helm template t charts/secrets-ui --namespace secrets $values >rendered.yaml
             kubeconform -strict -summary -kubernetes-version 1.33.0 -schema-location default rendered.yaml

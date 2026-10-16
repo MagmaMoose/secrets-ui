@@ -23,6 +23,7 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [state, setState] = useState<"loading" | "signed-out" | "ready" | "ended">("loading");
   const [authError] = useState(takeAuthError);
+  const [signIn, setSignIn] = useState<{ id: "entra" | "google"; name: string } | null>(null);
   const [route, setRoute] = useState(routeFromHash);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextToast = useRef(0);
@@ -43,6 +44,10 @@ export function App() {
       })
       .catch((err) => setState(err instanceof ApiError && err.status === 401 ? "signed-out" : "ended"));
   }, []);
+
+  useEffect(() => {
+    if (state === "signed-out" || state === "ended") api.signInProvider().then(setSignIn, () => setSignIn(null));
+  }, [state]);
 
   useEffect(() => {
     const onHash = () => setRoute(routeFromHash());
@@ -74,7 +79,11 @@ export function App() {
           <Logo />
           <h1>Secrets UI</h1>
           <p className="muted">
-            {state === "ended" ? "Your session has ended." : "Sign in with your Microsoft work account to manage the secrets your roles give you."}
+            {state === "ended"
+              ? "Your session has ended."
+              : signIn?.id === "google"
+                ? "Sign in with your Google Workspace account to manage the secrets your groups give you."
+                : "Sign in with your work account to manage the secrets your roles give you."}
           </p>
           {authError && (
             <p className="notice error" role="alert">
@@ -82,7 +91,7 @@ export function App() {
             </p>
           )}
           <a className="button primary wide" href="/auth/login">
-            Sign in with Microsoft
+            Sign in{signIn ? ` with ${signIn.name}` : ""}
           </a>
         </div>
       </main>

@@ -2,7 +2,7 @@
 name = "secrets-ui"
 # The release version lives in the git tag and reaches the image as APP_VERSION.
 version = "0.0.0"
-description = "Manage secrets in the browser, signed in with Entra ID and acting as yourself: Azure Key Vault and HashiCorp Vault"
+description = "Manage secrets in the browser, signed in with Entra ID or Google and acting as yourself: Azure Key Vault and HashiCorp Vault"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
