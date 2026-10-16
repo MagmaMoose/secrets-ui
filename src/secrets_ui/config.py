@@ -20,6 +20,7 @@ from .providers.hashicorp_vault import PATH_RULE
 _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _HOST = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
 _COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
+_GOOGLE_CLIENT = re.compile(r"^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$")
 _STORE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _VAULT_PATH = re.compile(PATH_RULE)
 _SECRET_STORE = re.compile(r"^(?:(?:ClusterSecretStore|SecretStore)/)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
@@ -68,12 +69,16 @@ class Branding:
 
 @dataclass(frozen=True)
 class Config:
+    # The app at its identity provider: for Google, tenant_id is empty and authority is Google's.
     tenant_id: str
     client_id: str
     origin: str
     authority: str
     session_key: bytes
     session_seconds: int
+    sign_in: str = "entra"
+    # Google only: the Workspace domains whose accounts may sign in.
+    google_domains: tuple[str, ...] = ()
     federated_token_file: Path | None = None
     client_secret: str | None = None
     azure_keyvault: AzureKeyVaultConfig | None = None
@@ -195,22 +200,58 @@ def _hashicorp_vault(env: dict[str, str]) -> HashiCorpVaultConfig:
     )
 
 
+def _google(env: dict[str, str]) -> dict[str, Any]:
+    client_id = env.get("GOOGLE_CLIENT_ID", "").strip()
+    if not _GOOGLE_CLIENT.match(client_id):
+        raise ConfigError("GOOGLE_CLIENT_ID must be an OAuth client id, such as 1234-abc.apps.googleusercontent.com")
+    secret = _secret(env, "GOOGLE_CLIENT_SECRET")
+    if not secret:
+        raise ConfigError("set GOOGLE_CLIENT_SECRET or GOOGLE_CLIENT_SECRET_FILE")
+    domains = tuple(d.strip().lower() for d in env.get("SECRETS_UI_GOOGLE_DOMAINS", "").split(",") if d.strip())
+    # Without a domain any Google account could sign in, so there is no default.
+    if not domains or not all(_HOST.match(d) for d in domains):
+        raise ConfigError("SECRETS_UI_GOOGLE_DOMAINS must list the Workspace domains whose accounts may sign in, such as example.com")
+    return {
+        "tenant_id": "",
+        "client_id": client_id,
+        "authority": "https://accounts.google.com",
+        "client_secret": secret,
+        "google_domains": domains,
+    }
+
+
 def load_config(env: dict[str, str] | None = None) -> Config:
     env = dict(os.environ if env is None else env)
 
-    token_file = env.get("AZURE_FEDERATED_TOKEN_FILE", "").strip()
-    secret = _secret(env, "AZURE_CLIENT_SECRET")
-    if not token_file and not secret:
-        raise ConfigError("set AZURE_FEDERATED_TOKEN_FILE (workload identity), AZURE_CLIENT_SECRET or AZURE_CLIENT_SECRET_FILE")
+    sign_in = env.get("SECRETS_UI_SIGN_IN", "entra").strip()
+    if sign_in not in ("entra", "google"):
+        raise ConfigError("SECRETS_UI_SIGN_IN takes entra or google")
+    if sign_in == "entra":
+        token_file = env.get("AZURE_FEDERATED_TOKEN_FILE", "").strip()
+        secret = _secret(env, "AZURE_CLIENT_SECRET")
+        if not token_file and not secret:
+            raise ConfigError("set AZURE_FEDERATED_TOKEN_FILE (workload identity), AZURE_CLIENT_SECRET or AZURE_CLIENT_SECRET_FILE")
+        identity = {
+            "tenant_id": _guid(env, "AZURE_TENANT_ID"),
+            "client_id": _guid(env, "AZURE_CLIENT_ID"),
+            "authority": _authority(env.get("AZURE_AUTHORITY_HOST", "")),
+            "federated_token_file": Path(token_file) if token_file else None,
+            "client_secret": secret or None,
+        }
+    else:
+        identity = _google(env)
 
     session_key = _secret(env, "SECRETS_UI_SESSION_KEY")
     if len(session_key) < 32:
         raise ConfigError("SECRETS_UI_SESSION_KEY (or SECRETS_UI_SESSION_KEY_FILE) must hold at least 32 characters")
 
-    providers = tuple(p.strip() for p in env.get("SECRETS_UI_PROVIDERS", "azure-keyvault").split(",") if p.strip())
+    default = "azure-keyvault" if sign_in == "entra" else ""
+    providers = tuple(p.strip() for p in env.get("SECRETS_UI_PROVIDERS", default).split(",") if p.strip())
     unknown = sorted(set(providers) - set(PROVIDERS))
     if unknown or not providers:
         raise ConfigError(f"SECRETS_UI_PROVIDERS takes {', '.join(PROVIDERS)}; got {', '.join(unknown) or 'none'}")
+    if sign_in == "google" and "azure-keyvault" in providers:
+        raise ConfigError("azure-keyvault needs SECRETS_UI_SIGN_IN=entra: Key Vault takes Entra ID tokens only")
 
     azure_keyvault = None
     if "azure-keyvault" in providers:
@@ -255,14 +296,11 @@ def load_config(env: dict[str, str] | None = None) -> Config:
             raise ConfigError(f"{name} must be a colour as #rrggbb, such as #4f46e5")
 
     return Config(
-        tenant_id=_guid(env, "AZURE_TENANT_ID"),
-        client_id=_guid(env, "AZURE_CLIENT_ID"),
         origin=_origin(env["SECRETS_UI_PUBLIC_ORIGIN"]),
-        authority=_authority(env.get("AZURE_AUTHORITY_HOST", "")),
         session_key=session_key.encode(),
         session_seconds=hours * 3600,
-        federated_token_file=Path(token_file) if token_file else None,
-        client_secret=secret or None,
+        sign_in=sign_in,
+        **identity,
         azure_keyvault=azure_keyvault,
         hashicorp_vault=hashicorp_vault,
         static_dir=Path(static) if static and Path(static).is_dir() else None,

@@ -1,10 +1,19 @@
 secrets-ui is running as {{ include "secrets-ui.fullname" . }} in {{ .Release.Namespace }}.
 
+{{- if eq .Values.signIn "google" }}
+
+Open {{ .Values.config.publicOrigin }} and sign in. Add this authorized redirect URI to the
+OAuth client ({{ .Values.google.clientId }}):
+
+  {{ .Values.config.publicOrigin }}/auth/callback
+{{- else }}
+
 Open {{ .Values.config.publicOrigin }} and sign in. Register this redirect URI on the app
 registration ({{ .Values.azure.clientId }}):
 
   {{ .Values.config.publicOrigin }}/auth/callback
-{{- if .Values.azure.workloadIdentity.enabled }}
+{{- end }}
+{{- if and (eq .Values.signIn "entra") .Values.azure.workloadIdentity.enabled }}
 
 and a federated credential for this service account:
 

@@ -1,5 +1,5 @@
-"""Fake Entra ID, Key Vault, Log Analytics and HashiCorp Vault behind one httpx MockTransport, and
-an app wired to them."""
+"""Fake Entra ID, Google, Key Vault, Log Analytics and HashiCorp Vault behind one httpx
+MockTransport, and an app wired to them."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ CLIENT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 ORIGIN = "https://kv.example.test"
 AUTHORITY = "https://login.example.test"
 ASSERTION = "header.workload-identity-token.signature"
+GOOGLE_CLIENT = "1234-abc.apps.googleusercontent.com"
 
 
 @dataclass
@@ -116,12 +117,62 @@ class FakeVault:
 
 
 @dataclass
-class FakeHashiVault:
-    """A KV v2 mount at `secret` and JWT auth at `jwt` (role secrets-ui) that trusts FakeEntra's ID
-    tokens. A token may touch the folders `folders` gives the roles it signed in with."""
+class FakeGoogle:
+    """Google's token endpoint, keys and Cloud Identity group search, for one Workspace person."""
 
-    entra: FakeEntra
+    key: Any = field(default_factory=lambda: rsa.generate_private_key(public_exponent=65537, key_size=2048))
+    groups: list[str] = field(default_factory=list)
+    hd: str | None = "example.test"
+    email_verified: bool = True
+    challenge: str = ""
+    nonce: str = ""
+    token_requests: list[dict[str, list[str]]] = field(default_factory=list)
+    group_queries: list[str] = field(default_factory=list)
+    groups_status: int = 200
+
+    def jwks(self) -> dict[str, Any]:
+        jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(self.key.public_key()))
+        return {"keys": [{**jwk, "kid": "google-key", "use": "sig", "alg": "RS256"}]}
+
+    def id_token(self) -> str:
+        now = int(time.time())
+        claims = {"iss": "https://accounts.google.com", "aud": GOOGLE_CLIENT, "sub": "1098765", "iat": now, "exp": now + 3600, "nonce": self.nonce}
+        claims |= {"email": "grace@example.test", "email_verified": self.email_verified, "name": "Grace Hopper", **({"hd": self.hd} if self.hd else {})}
+        return jwt.encode(claims, self.key, algorithm="RS256", headers={"kid": "google-key"})
+
+    def token(self, request: httpx.Request) -> httpx.Response:
+        form = parse_qs(request.content.decode())
+        self.token_requests.append(form)
+        if form.get("client_secret") != ["google-secret"]:
+            return httpx.Response(401, json={"error": "invalid_client"})
+        if form["grant_type"][0] == "authorization_code":
+            digest = base64.urlsafe_b64encode(hashlib.sha256(form["code_verifier"][0].encode()).digest()).rstrip(b"=").decode()
+            if form["code"][0] != "good-code" or digest != self.challenge:
+                return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Bad Request"})
+            return httpx.Response(200, json={"access_token": "ga-1", "refresh_token": "grt-1", "id_token": self.id_token(), "expires_in": 3599})
+        if form["grant_type"][0] == "refresh_token" and form["refresh_token"] == ["grt-1"]:
+            return httpx.Response(200, json={"access_token": "ga-2", "id_token": self.id_token(), "expires_in": 3599})
+        return httpx.Response(400, json={"error": "invalid_grant"})
+
+    def search_groups(self, request: httpx.Request) -> httpx.Response:
+        self.group_queries.append(request.url.params["query"])
+        if request.headers.get("authorization") != "Bearer ga-1" or self.groups_status != 200:
+            return httpx.Response(self.groups_status if self.groups_status != 200 else 401, json={"error": {"message": "The caller does not have permission"}})
+        # One group a page, to exercise nextPageToken.
+        index = int(request.url.params.get("pageToken") or 0)
+        page = {"memberships": [{"groupKey": {"id": g}} for g in self.groups[index : index + 1]]}
+        return httpx.Response(200, json=page | ({"nextPageToken": str(index + 1)} if index + 1 < len(self.groups) else {}))
+
+
+@dataclass
+class FakeHashiVault:
+    """A KV v2 mount at `secret` and JWT auth at `jwt` (role secrets-ui) that trusts one identity
+    provider's ID tokens. A token may touch the folders `folders` gives the roles it signed in with."""
+
+    idp: Any
     folders: dict[str, str] = field(default_factory=dict)
+    audience: str = CLIENT
+    issuer: str = f"{AUTHORITY}/{TENANT}/v2.0"
     # {path: [{"data", "created_time", "deletion_time", "destroyed"}, ...]}, oldest version first.
     kv: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     tokens: dict[str, list[str]] = field(default_factory=dict)
@@ -145,13 +196,14 @@ class FakeHashiVault:
         if path == "auth/jwt/login":
             body = json.loads(request.content)
             try:
-                claims = jwt.decode(body["jwt"], self.entra.key.public_key(), algorithms=["RS256"], audience=CLIENT, issuer=f"{AUTHORITY}/{TENANT}/v2.0")
+                claims = jwt.decode(body["jwt"], self.idp.key.public_key(), algorithms=["RS256"], audience=self.audience, issuer=self.issuer)
             except jwt.PyJWTError as err:
                 return httpx.Response(400, json={"errors": [f"error validating token: {err}"]})
             if body.get("role") != "secrets-ui":
                 return httpx.Response(400, json={"errors": [f'role "{body.get("role")}" could not be found']})
             token = f"hvs.{len(self.tokens) + 1}"
-            self.tokens[token] = list(claims.get("roles") or [])
+            # Google ID tokens carry no roles; this Vault looks the person's groups up, as its Google provider_config would.
+            self.tokens[token] = list(claims.get("roles") or [g.split("@")[0] for g in getattr(self.idp, "groups", [])])
             self.logins.append(body)
             return httpx.Response(200, json={"auth": {"client_token": token, "lease_duration": 3600, "renewable": True}})
         roles = self.tokens.get(request.headers.get("x-vault-token", ""))
@@ -203,6 +255,7 @@ class World:
     # What the Log Analytics API answers any audit query with, in the query's column order.
     audit_rows: list[list[Any]] = field(default_factory=list)
     hashi: FakeHashiVault | None = None
+    google: FakeGoogle | None = None
 
     def vault_requests(self) -> list[httpx.Request]:
         return [r for r in self.requests if r.url.host.endswith(".vault.azure.net")]
@@ -215,6 +268,14 @@ class World:
                 return httpx.Response(200, json=self.entra.jwks())
             if path == f"/{TENANT}/oauth2/v2.0/token":
                 return self.entra.token(request)
+            return httpx.Response(404)
+        if self.google is not None and host in ("oauth2.googleapis.com", "www.googleapis.com", "cloudidentity.googleapis.com"):
+            if host == "oauth2.googleapis.com" and path == "/token":
+                return self.google.token(request)
+            if host == "www.googleapis.com" and path == "/oauth2/v3/certs":
+                return httpx.Response(200, json=self.google.jwks())
+            if path == "/v1/groups/-/memberships:searchDirectGroups":
+                return self.google.search_groups(request)
             return httpx.Response(404)
         if host == "vault.example.test" and self.hashi is not None:
             return self.hashi.handle(request)

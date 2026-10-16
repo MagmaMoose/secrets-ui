@@ -15,6 +15,10 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Who people sign in with: entra (Entra ID) or google (Google Workspace). Azure Key Vault takes
+# Entra ID tokens only, so it is off with google.
+signIn: entra
+
 azure:
   # The Entra ID tenant (a GUID) and the app registration's client id.
   tenantId: ""
@@ -31,6 +35,15 @@ azure:
   clientSecret:
     existingSecret: ""
     key: client-secret
+
+# With signIn: google. The OAuth client (type Web application), a Secret holding its client
+# secret, and the Workspace domains whose accounts may sign in.
+google:
+  clientId: ""
+  clientSecret:
+    existingSecret: ""
+    key: client-secret
+  domains: []
 
 config:
   # Where people open the UI, scheme and host only. The redirect URI to register on the app
