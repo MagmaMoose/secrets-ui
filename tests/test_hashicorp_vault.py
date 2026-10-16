@@ -142,6 +142,15 @@ def test_restore_writes_the_old_data_as_a_new_version_with_check_and_set(vclient
     assert json.loads(write.content)["options"] == {"cas": 2}
 
 
+def test_a_kustomize_example_extracts_every_key_by_its_path_in_the_mount(vclient, world):
+    sign_in(vclient, world)
+    response = vclient.get(f"{BASE}/secrets/app/config/external-secret")
+    assert response.status_code == 200
+    manifest = response.json()["files"]["externalsecret.yaml"]
+    assert "  name: app-config\n" in manifest and "  dataFrom:\n    - extract:\n        key: dev/team-a/app/config\n" in manifest
+    assert vault_requests(world) == []
+
+
 def test_attributes_vault_does_not_have_are_refused(vclient, world):
     me = sign_in(vclient, world)
     response = vclient.patch(f"{BASE}/secrets/db", headers=write_headers(me), json={"enabled": False})

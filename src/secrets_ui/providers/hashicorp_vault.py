@@ -78,8 +78,9 @@ class HashiCorpVault(Provider):
         auth_role: str,
         stores: dict[str, VaultStore],
         labels: dict[str, str] | None = None,
+        secret_stores: dict[str, str] | None = None,
     ):
-        super().__init__(labels)
+        super().__init__(labels, secret_stores)
         self._http = http
         self._address = address
         self._auth_mount = auth_mount
@@ -106,6 +107,11 @@ class HashiCorpVault(Provider):
     def _check(self, name: str) -> None:
         if not re.fullmatch(PATH_RULE, name):
             raise ProviderError(400, "invalid_name", f"Not a secret path this UI takes. {self.name_hint}")
+
+    def external_secret_source(self, store: str, name: str) -> dict[str, Any]:
+        """Every key of the secret's object, through a store whose path is the KV v2 mount."""
+        self._check(name)
+        return {"dataFrom": [{"extract": {"key": f"{self._stores[store].path}/{name}".lstrip("/")}}]}
 
     def _api(self, *segments: str) -> str:
         return f"{self._address}/v1/" + "/".join(quote(s, safe="") for s in segments if s)
