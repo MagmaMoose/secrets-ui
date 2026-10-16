@@ -1,3 +1,5 @@
+# Versions wait 7 days after release before a PR proposes them, so a compromised or yanked
+# release has time to be pulled. Security updates are exempt and arrive at once.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -13,3 +15,27 @@ updates:
       actions-security:
         applies-to: security-updates
         patterns: ["*"]
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      frontend:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

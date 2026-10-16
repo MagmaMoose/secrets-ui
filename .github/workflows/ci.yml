@@ -1,0 +1,88 @@
+# Backend tests, the frontend's typecheck and build, and the chart's lint and schema checks.
+#
+# Its own file, not a step in release.yml, security.yml or quality.yml: those are rewritten
+# from org-wide templates by Caldrith provisioning.
+#
+# All actions are SHA-pinned; the trailing comment is the tag each SHA corresponds to.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.12'
+      - run: uv sync --locked
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Typecheck and build
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+      # The CSP allows no inline script or style, so the built page must carry none.
+      - name: No inline code in the page
+        run: |
+          set -euo pipefail
+          if grep -qE '<script>|<script [^>]*>[^<]+</script>|<style|style=' frontend/dist/index.html; then
+            echo "frontend/dist/index.html has inline script or style, which the CSP blocks" >&2
+            exit 1
+          fi
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: yokawasa/action-setup-kube-tools@b16d49b2c459d33cf9d4c300a220ef0bcdbc730a # v0.14.0
+        with:
+          setup-tools: kubeconform
+          kubeconform: '0.6.7'
+      - name: helm lint
+        run: helm lint charts/secrets-ui --values charts/secrets-ui/ci/default-values.yaml
+      # The smallest working install and everything switched on, against the real API schemas.
+      - name: Render and validate
+        run: |
+          set -euo pipefail
+          required="--set azure.tenantId=11111111-2222-3333-4444-555555555555 --set azure.clientId=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --set config.publicOrigin=https://secrets.example.com"
+          for values in "$required" "--values charts/secrets-ui/ci/default-values.yaml"; do
+            # shellcheck disable=SC2086
+            helm template t charts/secrets-ui --namespace secrets $values >rendered.yaml
+            kubeconform -strict -summary -kubernetes-version 1.33.0 -schema-location default rendered.yaml
+          done
+          # Missing required values must fail the render, not install something half-configured.
+          if helm template t charts/secrets-ui >/dev/null 2>&1; then
+            echo "the chart rendered without azure.tenantId" >&2
+            exit 1
+          fi

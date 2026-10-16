@@ -1,0 +1,26 @@
+# Everything on, for CI's lint and render.
+azure:
+  tenantId: 11111111-2222-3333-4444-555555555555
+  clientId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+config:
+  publicOrigin: https://secrets.example.com
+providers:
+  azureKeyVault:
+    roles: "^team-[a-z]+-keyvault-(dev|prd)$"
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+ingress:
+  enabled: true
+  className: traefik
+  tls:
+    secretName: secrets-ui-tls
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+priorityClassName: medium
+topologySpread:
+  whenUnsatisfiable: DoNotSchedule
+  nodeTaintsPolicy: Honor
