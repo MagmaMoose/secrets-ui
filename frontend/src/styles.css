@@ -55,6 +55,11 @@ body {
   font: 14px/1.5 var(--font);
 }
 
+::selection {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
 h1 {
   font-size: 20px;
   margin: 0;
