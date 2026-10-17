@@ -71,12 +71,17 @@ class Provider(ABC):
         """The delegated scope that reads a store's audit log. Empty for none."""
         return ""
 
+    @property
+    def names_scope(self) -> str:
+        """The delegated scope that puts names to the ids of callers in the audit log. Empty for none."""
+        return ""
+
     def has_audit(self, store: str) -> bool:
         return False
 
-    async def audit(self, store: str, token: str) -> list[dict[str, Any]]:
+    async def audit(self, store: str, token: str, names_token: str = "") -> list[dict[str, Any]]:
         """The store's own record of what was done to its secrets, newest first: time, operation,
-        result, caller, ip and secret."""
+        result, caller, ip and secret; a caller named through `names_token` keeps its id as caller_id."""
         raise ProviderError(400, "audit_not_supported", "This store has no audit log here.")
 
     @abstractmethod

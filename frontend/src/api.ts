@@ -36,7 +36,8 @@ export type Secret = {
 export type DeletedSecret = Secret & { deleted: number | null; purge_at: number | null };
 
 // One entry in a store's own audit log; `secret` is empty for an operation on the store itself.
-export type AuditEvent = { time: number | null; operation: string; result: string; caller: string; ip: string; secret: string };
+// `caller_id` is set when the caller is shown by name.
+export type AuditEvent = { time: number | null; operation: string; result: string; caller: string; caller_id?: string; ip: string; secret: string };
 
 export type SecretVersion = {
   version: string;

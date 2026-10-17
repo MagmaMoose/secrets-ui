@@ -208,7 +208,7 @@ export function StoreView({ store, provider, notify }: { store: Store; provider:
                 {auditRows.map((e, i) => (
                   <tr key={i}>
                     <td data-label="Time">{when(e.time, true)}</td>
-                    <td data-label="Who" className="name">
+                    <td data-label="Who" className="name" title={e.caller_id}>
                       {e.caller || "—"}
                     </td>
                     <td data-label="Operation" className="mono">

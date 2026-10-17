@@ -173,9 +173,11 @@ Analytics API with the person's token, so Azure RBAC decides who sees it:
 3. People may read the vault's logs: Reader on the vault, or a role with
    `Microsoft.Insights/logs/AzureDiagnostics/read` and `Microsoft.Insights/logs/AZKVAuditLogs/read`.
 4. The vault is listed in `SECRETS_UI_AZURE_KEYVAULT_STORES` with its `resource_id`.
+5. Optional: the delegated permission Microsoft Graph `Application.Read.All`, with admin
+   consent, shows an app's calls under its service principal's name instead of its id.
 
 The UI shows the last 30 days of reads and changes (not listings), newest first. The app calls
-`api.loganalytics.azure.com` for it.
+`api.loganalytics.azure.com` for it, and `graph.microsoft.com` for the names.
 
 ## Install
 

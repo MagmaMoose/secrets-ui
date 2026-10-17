@@ -254,6 +254,8 @@ class World:
     requests: list[httpx.Request] = field(default_factory=list)
     # What the Log Analytics API answers any audit query with, in the query's column order.
     audit_rows: list[list[Any]] = field(default_factory=list)
+    # Service principals Graph knows: {"object id" or "app id": display name}, with the ids each kind answers to.
+    principals: dict[str, tuple[str, str]] = field(default_factory=dict)
     hashi: FakeHashiVault | None = None
     google: FakeGoogle | None = None
 
@@ -279,6 +281,14 @@ class World:
             return httpx.Response(404)
         if host == "vault.example.test" and self.hashi is not None:
             return self.hashi.handle(request)
+        if host == "graph.microsoft.com":
+            if not request.headers.get("authorization", "").startswith("Bearer at-"):
+                return httpx.Response(401, json={"error": {"code": "InvalidAuthenticationToken"}})
+            key = path.removeprefix("/v1.0/servicePrincipals")
+            for principal, (kind, name) in self.principals.items():
+                if key == (f"/{principal}" if kind == "id" else f"(appId='{principal}')"):
+                    return httpx.Response(200, json={"displayName": name})
+            return httpx.Response(404, json={"error": {"code": "Request_ResourceNotFound"}})
         if host == "api.loganalytics.azure.com":
             if not request.headers.get("authorization", "").startswith("Bearer at-"):
                 return httpx.Response(401, json={"error": {"code": "AuthorizationRequired", "message": "Valid authentication was not provided"}})

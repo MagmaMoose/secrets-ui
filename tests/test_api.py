@@ -225,6 +225,38 @@ def test_the_audit_log_is_the_vaults_own_read_with_the_persons_token(world, env)
     assert client.get("/api/stores/azure-keyvault/team-b-kv-dev/audit").json()["error"] == "audit_not_configured"
 
 
+def test_apps_in_the_audit_log_show_by_their_service_principals_name(world, env):
+    client = make_client(world, {**env, **WITH_AUDIT})
+    sign_in(client, world)
+    sp, app, unknown = "d6e98b83-154a-497c-b93c-6259b830ccea", "11111111-0000-0000-0000-000000000001", "22222222-0000-0000-0000-000000000002"
+    world.principals = {sp: ("id", "external-secrets"), app: ("appId", "deploy-pipeline")}
+    world.audit_rows = [
+        ["2026-10-17T09:19:00Z", "SecretGet", "OK", "10.0.0.1", caller, "https://team-a-kv-dev.vault.azure.net/secrets/db-password/0a1b"]
+        for caller in (sp, app, unknown, "ada@example.test")
+    ]
+    events = client.get("/api/stores/azure-keyvault/team-a-kv-dev/audit").json()["events"]
+    assert [(e["caller"], e.get("caller_id")) for e in events] == [
+        ("external-secrets", sp),
+        ("deploy-pipeline", app),
+        (unknown, None),
+        ("ada@example.test", None),
+    ]
+    graph = [r for r in world.requests if r.url.host == "graph.microsoft.com"]
+    assert all(r.url.params["$select"] == "displayName" for r in graph)
+    assert "offline_access https://graph.microsoft.com/Application.Read.All" in [t["scope"][0] for t in world.entra.token_requests if "scope" in t]
+
+
+def test_without_consent_for_graph_the_audit_log_shows_ids(world, env):
+    client = make_client(world, {**env, **WITH_AUDIT})
+    sign_in(client, world)
+    world.entra.refuse_scope = "graph.microsoft.com"
+    world.audit_rows = [["2026-10-17T09:19:00Z", "SecretGet", "OK", "10.0.0.1", "d6e98b83-154a-497c-b93c-6259b830ccea", ""]]
+    response = client.get("/api/stores/azure-keyvault/team-a-kv-dev/audit")
+    assert response.status_code == 200
+    assert response.json()["events"][0]["caller"] == "d6e98b83-154a-497c-b93c-6259b830ccea"
+    assert not [r for r in world.requests if r.url.host == "graph.microsoft.com"]
+
+
 def test_no_consent_for_the_audit_log_leaves_the_person_signed_in(world, env):
     client = make_client(world, {**env, **WITH_AUDIT})
     sign_in(client, world)
