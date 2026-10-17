@@ -78,6 +78,16 @@ def theme_css(brand: Branding) -> str:
     return (f"html:root{{{light}}}\n" if light else "") + (f"@media (prefers-color-scheme: dark){{html:root{{{dark}}}}}\n" if dark else "")
 
 
+def favicon_svg(brand: Branding) -> str:
+    """The tab icon in the operator's accent. Unbranded, it is frontend/public/favicon.svg."""
+    tile, glyph = brand.accent or "#4f46e5", brand.accent_text or "#fff"
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="{tile}"/>'
+        f'<circle cx="12" cy="16" r="5" fill="none" stroke="{glyph}" stroke-width="2.5"/>'
+        f'<path d="M17 16h9m-3 0v4m-4-4v3" stroke="{glyph}" stroke-width="2.5" stroke-linecap="round"/></svg>'
+    )
+
+
 def _expiry(value: datetime | None) -> int | None:
     return None if value is None else int(value.timestamp())
 
@@ -296,10 +306,15 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         return {"status": "ok"}
 
     theme = theme_css(cfg.branding)
+    favicon = favicon_svg(cfg.branding)
 
     @app.get("/theme.css")
     async def theme_stylesheet() -> Response:
         return Response(theme, media_type="text/css")
+
+    @app.get("/favicon.svg")
+    async def favicon_image() -> Response:
+        return Response(favicon, media_type="image/svg+xml")
 
     @app.get("/auth/provider")
     async def sign_in_provider() -> dict[str, str]:
