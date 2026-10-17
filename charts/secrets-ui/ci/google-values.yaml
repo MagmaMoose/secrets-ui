@@ -1,4 +1,4 @@
-# Google Workspace sign-in with HashiCorp Vault, for CI's lint and render.
+# Google Workspace sign-in with HashiCorp Vault and OCI Vault, for CI's lint and render.
 signIn: google
 google:
   clientId: 1234-abc.apps.googleusercontent.com
@@ -15,3 +15,15 @@ providers:
       - name: team-a-vault-dev
         mount: secret
         path: dev/team-a
+  ociVault:
+    enabled: true
+    region: eu-amsterdam-1
+    domainUrl: https://idcs-0000.identity.oraclecloud.com
+    clientId: secrets-ui
+    clientSecret:
+      existingSecret: secrets-ui-oci
+    stores:
+      - name: team-a-oci-dev
+        compartment: ocid1.compartment.oc1..aaaa
+        vault: ocid1.vault.oc1.eu-amsterdam-1.aaaa
+        key: ocid1.key.oc1.eu-amsterdam-1.aaaa.bbbb

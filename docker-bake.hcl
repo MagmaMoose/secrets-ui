@@ -19,7 +19,7 @@ target "app" {
   }
   labels = {
     "org.opencontainers.image.source"      = "https://github.com/MagmaMoose/secrets-ui"
-    "org.opencontainers.image.description" = "Manage secrets in the browser, signed in with Entra ID and acting as yourself"
+    "org.opencontainers.image.description" = "Manage secrets in the browser, signed in with Entra ID or Google and acting as yourself"
     "org.opencontainers.image.licenses"    = "Apache-2.0"
   }
 }

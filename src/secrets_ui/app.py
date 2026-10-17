@@ -32,6 +32,7 @@ from .oidc import SignInError
 from .providers import CONTENT_TYPE, ENABLE, EXPIRY, RECOVER, VERSIONS, Provider, ProviderError
 from .providers.azure_keyvault import AzureKeyVault
 from .providers.hashicorp_vault import HashiCorpVault, VaultStore
+from .providers.oci_vault import OciStore, OciVault
 from .session import Cookies, Sealer, TokenCache
 
 log = logging.getLogger("secrets_ui")
@@ -145,6 +146,18 @@ def build_providers(cfg: Config, http: httpx.AsyncClient, vault_http: httpx.Asyn
             stores={name: VaultStore(mount, path) for name, (mount, path) in hv.stores.items()},
             labels=hv.labels,
             secret_stores=hv.secret_stores,
+        )
+    if cfg.oci_vault is not None:
+        oci = cfg.oci_vault
+        providers[OciVault.id] = OciVault(
+            http,
+            region=oci.region,
+            domain=oci.domain,
+            client_id=oci.client_id,
+            client_secret=oci.client_secret,
+            stores={name: OciStore(*ids) for name, ids in oci.stores.items()},
+            labels=oci.labels,
+            secret_stores=oci.secret_stores,
         )
     return providers
 

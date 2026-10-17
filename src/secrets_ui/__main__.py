@@ -37,6 +37,8 @@ def main() -> None:
                 "azure_keyvault_roles": cfg.azure_keyvault.roles.pattern if cfg.azure_keyvault else None,
                 "hashicorp_vault": cfg.hashicorp_vault.address if cfg.hashicorp_vault else None,
                 "hashicorp_vault_stores": len(cfg.hashicorp_vault.stores) if cfg.hashicorp_vault else None,
+                "oci_vault": cfg.oci_vault.region if cfg.oci_vault else None,
+                "oci_vault_stores": len(cfg.oci_vault.stores) if cfg.oci_vault else None,
             }
         )
     )

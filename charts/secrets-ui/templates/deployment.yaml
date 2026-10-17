@@ -24,6 +24,13 @@
 {{- fail "providers.hashicorpVault.stores must list at least one store" }}
 {{- end }}
 {{- end }}
+{{- $oci := .Values.providers.ociVault }}
+{{- if $oci.enabled }}
+{{- $providers = append $providers "oci-vault" }}
+{{- if not $oci.stores }}
+{{- fail "providers.ociVault.stores must list at least one store" }}
+{{- end }}
+{{- end }}
 {{- if not $providers }}
 {{- fail "enable at least one of providers.*" }}
 {{- end }}
@@ -166,6 +173,18 @@ spec:
               value: /etc/secrets-ui/vault-ca/ca.crt
             {{- end }}
             {{- end }}
+            {{- if $oci.enabled }}
+            - name: SECRETS_UI_OCI_REGION
+              value: {{ required "providers.ociVault.region is required, such as eu-amsterdam-1" $oci.region | quote }}
+            - name: SECRETS_UI_OCI_DOMAIN_URL
+              value: {{ required "providers.ociVault.domainUrl is required" $oci.domainUrl | quote }}
+            - name: SECRETS_UI_OCI_CLIENT_ID
+              value: {{ required "providers.ociVault.clientId is required" $oci.clientId | quote }}
+            - name: SECRETS_UI_OCI_CLIENT_SECRET_FILE
+              value: /etc/secrets-ui/oci/{{ $oci.clientSecret.key }}
+            - name: SECRETS_UI_OCI_STORES
+              value: {{ toJson $oci.stores | quote }}
+            {{- end }}
             - name: SECRETS_UI_SESSION_HOURS
               value: {{ .Values.config.sessionHours | quote }}
             - name: SECRETS_UI_SESSION_KEY_FILE
@@ -212,6 +231,11 @@ spec:
               mountPath: /etc/secrets-ui/vault-ca
               readOnly: true
             {{- end }}
+            {{- if $oci.enabled }}
+            - name: oci-client-secret
+              mountPath: /etc/secrets-ui/oci
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
@@ -248,6 +272,15 @@ spec:
         - name: vault-ca
           configMap:
             name: {{ include "secrets-ui.fullname" . }}-vault-ca
+        {{- end }}
+        {{- if $oci.enabled }}
+        - name: oci-client-secret
+          secret:
+            secretName: {{ required "providers.ociVault.clientSecret.existingSecret is required" $oci.clientSecret.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ $oci.clientSecret.key }}
+                path: {{ $oci.clientSecret.key }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

@@ -5,7 +5,8 @@ People sign in with Entra ID or Google Workspace, see only the stores their role
 name, and every read or change runs **as them**: the store's own access control decides what
 they may do, and its audit log names the person, not the app.
 
-Two providers: **Azure Key Vault**, and **HashiCorp Vault** (KV v2), on their own or together.
+Three providers, on their own or together: **Azure Key Vault**, **HashiCorp Vault** (KV v2) and
+**OCI Vault**.
 
 What you can do in a vault:
 
@@ -66,8 +67,9 @@ sequenceDiagram
   `default-src 'none'` with `'self'` for scripts and styles and no inline code, no framing,
   HSTS.
 
-Network: the app calls `login.microsoftonline.com` and `<vault>.vault.azure.net` on 443, and
-your HashiCorp Vault where it listens. If your vaults have a firewall, it has to allow the app's
+Network: the app calls `login.microsoftonline.com` and `<vault>.vault.azure.net` on 443, your
+HashiCorp Vault where it listens, and for OCI the identity domain and
+`[secrets.]vaults.<region>.oci.oraclecloud.com`. If your vaults have a firewall, it has to allow the app's
 egress address, not the people's.
 
 ## Set up the app registration
@@ -140,10 +142,56 @@ Then set `SECRETS_UI_PROVIDERS=azure-keyvault,hashicorp-vault` (or just `hashico
 store names out of `SECRETS_UI_AZURE_KEYVAULT_ROLES`. On Kubernetes, a Vault on a private
 address needs `networkPolicy.extraEgress`.
 
+## Set up OCI Vault
+
+A store is one OCI vault in one compartment. A person sees it when a role (Entra ID) or group
+(Google) on their sign-in is the store's name; OCI's IAM policies decide what they can do there.
+
+The app trades each person's ID token for an OCI session token of their own, through a token
+exchange in your OCI identity domain, and signs every call with it. So OCI's audit log names the
+person, and the app holds no OCI access of its own. In the identity domain:
+
+1. Create a confidential application (client credentials, no app roles) that the exchange runs
+   as: `SECRETS_UI_OCI_CLIENT_ID` and `SECRETS_UI_OCI_CLIENT_SECRET`.
+2. Create an Identity Propagation Trust (`POST <domain>/admin/v1/IdentityPropagationTrusts`)
+   that maps the sign-in's ID token to the person's own OCI user:
+
+   ```json
+   {
+     "schemas": ["urn:ietf:params:scim:schemas:oracle:idcs:IdentityPropagationTrust"],
+     "name": "secrets-ui",
+     "type": "JWT",
+     "active": true,
+     "issuer": "https://login.microsoftonline.com/<tenant id>/v2.0",
+     "publicKeyEndpoint": "https://login.microsoftonline.com/<tenant id>/discovery/v2.0/keys",
+     "clientClaimName": "aud",
+     "clientClaimValues": ["<app id>"],
+     "subjectClaimName": "preferred_username",
+     "subjectMappingAttribute": "userName",
+     "subjectType": "User",
+     "allowImpersonation": false,
+     "oauthClients": ["<client id from step 1>"]
+   }
+   ```
+
+   With Google sign-in: issuer `https://accounts.google.com`, keys
+   `https://www.googleapis.com/oauth2/v3/certs`, the OAuth client id as `aud`, and `email` as the
+   subject claim. People need an OCI user whose user name matches that claim.
+3. Give people's OCI groups the policies for their vault, such as
+   `allow group <domain>/<group> to manage secret-family in compartment <compartment>` and
+   `allow group <domain>/<group> to use keys in compartment <compartment>` (new secrets are
+   encrypted with the store's master key).
+
+Then set `SECRETS_UI_PROVIDERS` to include `oci-vault`, and `SECRETS_UI_OCI_REGION`,
+`SECRETS_UI_OCI_DOMAIN_URL` and `SECRETS_UI_OCI_STORES`. A value is the secret's text. Delete
+schedules the deletion with OCI's default retention, and Recover cancels it; restoring a version
+points the secret back at it without moving the value.
+
 ## Sign in with Google
 
 With `SECRETS_UI_SIGN_IN=google`, people sign in with their Google Workspace account instead of
-Entra ID. Azure Key Vault takes Entra ID tokens only, so it is off then; HashiCorp Vault works.
+Entra ID. Azure Key Vault takes Entra ID tokens only, so it is off then; HashiCorp Vault and OCI
+Vault work.
 
 1. In a Google Cloud project of your organisation, set the OAuth consent screen to Internal and
    enable the Cloud Identity API.
@@ -214,7 +262,7 @@ install and keeps it on upgrade (`session.existingSecret` to bring your own). Se
 | `SECRETS_UI_SESSION_HOURS` | `8` | Sign-in lifetime, 1 to 24 |
 | `SECRETS_UI_BRAND_ACCENT` / `_TEXT` | | Your colours as `#rrggbb`: the accent (buttons, links, the selected store, the logo and the tab icon) and the text on it |
 | `SECRETS_UI_BRAND_ACCENT_DARK` / `_TEXT_DARK` | the two above | The same for dark mode |
-| `SECRETS_UI_PROVIDERS` | `azure-keyvault` (none with Google) | Which providers to offer: `azure-keyvault`, `hashicorp-vault` or both |
+| `SECRETS_UI_PROVIDERS` | `azure-keyvault` (none with Google) | Which providers to offer: any of `azure-keyvault`, `hashicorp-vault` and `oci-vault` |
 | `SECRETS_UI_AZURE_KEYVAULT_ROLES` | `.+` | Pattern a role must match to count as a vault |
 | `SECRETS_UI_AZURE_KEYVAULT_SUFFIX` | `vault.azure.net` | Key Vault DNS suffix |
 | `SECRETS_UI_HASHICORP_VAULT_ADDR` | | `https://vault.example.com:8200` |
@@ -222,6 +270,10 @@ install and keeps it on upgrade (`session.existingSecret` to bring your own). Se
 | `SECRETS_UI_HASHICORP_VAULT_AUTH_MOUNT` | `jwt` | The JWT auth mount |
 | `SECRETS_UI_HASHICORP_VAULT_AUTH_ROLE` | `secrets-ui` | The role on that mount |
 | `SECRETS_UI_HASHICORP_VAULT_CA_FILE` | | PEM bundle of a private CA, trusted for the calls to Vault only |
+| `SECRETS_UI_OCI_REGION` | | The vaults' region, such as `eu-amsterdam-1` |
+| `SECRETS_UI_OCI_DOMAIN_URL` | | The identity domain that runs the token exchange, `https://idcs-….identity.oraclecloud.com` |
+| `SECRETS_UI_OCI_CLIENT_ID` / `_CLIENT_SECRET` / `_FILE` | | Its confidential app, the one the exchange runs as |
+| `SECRETS_UI_OCI_STORES` | | The stores, in the order to show them, as JSON: `[{"name": "team-a-oci-dev", "label": "team-a-dev", "compartment": "ocid1.compartment…", "vault": "ocid1.vault…", "key": "ocid1.key…"}]`. `secret_store` as for Key Vault |
 | `SECRETS_UI_AZURE_KEYVAULT_STORES` | | How vaults show, as JSON: `[{"name": "team-a-keyvault-dev", "label": "team-a-dev", "resource_id": "/subscriptions/…/vaults/team-a-keyvault-dev"}]`. Listed vaults come first, in this order, under their label; the rest follow by name. A `resource_id` shows the vault's audit log; `secret_store` names the External Secrets store the Kustomize example uses (default: a `ClusterSecretStore` named after the vault, or `SecretStore/<name>`). It grants nothing |
 
 ## Develop
@@ -233,8 +285,8 @@ cd frontend && npm ci && npm run dev   # UI on :5173, proxies /api and /auth to 
 ```
 
 The tests run the whole sign-in against a fake Entra ID (real signed tokens and JWKS) and a
-fake Key Vault and a fake HashiCorp Vault, including the role filter, the reveal path and the
-CSRF checks.
+fake Key Vault, HashiCorp Vault, Google and OCI (which checks every request's signature),
+including the role filter, the reveal path and the CSRF checks.
 
 ## License
 
