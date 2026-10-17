@@ -132,6 +132,10 @@ spec:
             - name: SECRETS_UI_GOOGLE_DOMAINS
               value: {{ join "," .Values.google.domains | quote }}
             {{- end }}
+            # The tag deployed, not the one baked in: a release promotes its pull request's image
+            # as it is, so the image itself still says pr-<N>.
+            - name: APP_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
             - name: SECRETS_UI_PUBLIC_ORIGIN
               value: {{ $origin | quote }}
             - name: SECRETS_UI_PROVIDERS

@@ -160,7 +160,15 @@ export function App() {
                 </div>
               );
             })}
-            <p className="muted small version">{me.version}</p>
+            <p className="muted small version">
+              {me.release_notes ? (
+                <a href={me.release_notes} target="_blank" rel="noreferrer" title="Release notes">
+                  {me.version}
+                </a>
+              ) : (
+                me.version
+              )}
+            </p>
           </nav>
           <main className="content">{current && provider && <StoreView store={current} provider={provider} notify={notify} />}</main>
         </div>

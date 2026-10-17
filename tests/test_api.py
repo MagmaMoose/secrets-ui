@@ -1,6 +1,7 @@
 import json
 import logging
 
+import pytest
 from conftest import ORIGIN, make_client, sign_in, write_headers
 
 VAULT_ID = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-secrets/providers/Microsoft.KeyVault/vaults/team-a-kv-dev"
@@ -40,6 +41,20 @@ def test_the_theme_carries_the_operators_colours(world, env):
 def test_without_colours_the_theme_is_empty(client):
     response = client.get("/theme.css")
     assert response.status_code == 200 and response.text == ""
+
+
+@pytest.mark.parametrize(
+    ("version", "notes"),
+    [
+        ("v0.0.16", "https://github.com/MagmaMoose/secrets-ui/releases/tag/v0.0.16"),
+        ("v1.2.0-rc.1", "https://github.com/MagmaMoose/secrets-ui/releases/tag/v1.2.0-rc.1"),
+        ("pr-15", "https://github.com/MagmaMoose/secrets-ui/pull/15"),
+        ("dev", None),
+    ],
+)
+def test_the_version_links_to_its_release_notes(world, env, version, notes):
+    me = sign_in(make_client(world, {**env, "APP_VERSION": version}), world)
+    assert (me["version"], me["release_notes"]) == (version, notes)
 
 
 def test_an_unknown_provider_is_not_found(client, world):

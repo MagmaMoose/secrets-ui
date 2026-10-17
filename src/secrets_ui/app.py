@@ -9,6 +9,7 @@ and response bodies, never in a URL or a log line, and every API response is no-
 import hmac
 import json
 import logging
+import re
 import secrets
 import ssl
 from contextlib import asynccontextmanager
@@ -36,6 +37,7 @@ from .session import Cookies, Sealer, TokenCache
 log = logging.getLogger("secrets_ui")
 
 LOGIN_SECONDS = 600
+SOURCE = "https://github.com/MagmaMoose/secrets-ui"
 # The largest value any provider here takes: Azure Key Vault's 25 KB.
 MAX_VALUE = 25 * 1024
 
@@ -53,6 +55,15 @@ CSP = "; ".join(
         "frame-ancestors 'none'",
     ]
 )
+
+
+def release_notes(version: str) -> str | None:
+    """Where a version's changes are written up: its GitHub release, or the pull request it was built from."""
+    if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+        return f"{SOURCE}/releases/tag/{version}"
+    if found := re.fullmatch(r"pr-([0-9]+)", version):
+        return f"{SOURCE}/pull/{found.group(1)}"
+    return None
 
 
 def theme_css(brand: Branding) -> str:
@@ -345,6 +356,7 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
             "csrf": data.get("csrf", ""),
             "expires": data.get("exp"),
             "version": cfg.version,
+            "release_notes": release_notes(cfg.version),
             "providers": [p.describe() for p in providers.values()],
             "stores": [
                 {"provider": pid, "name": name, "label": p.labels.get(name, name), "location": p.location(name), "audit": p.has_audit(name)}

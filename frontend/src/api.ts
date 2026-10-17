@@ -17,6 +17,7 @@ export type Me = {
   csrf: string;
   expires: number;
   version: string;
+  release_notes: string | null;
   providers: ProviderInfo[];
   stores: Store[];
 };

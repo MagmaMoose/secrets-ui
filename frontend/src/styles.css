@@ -348,6 +348,15 @@ select:focus-visible,
   padding: 16px 10px 0;
 }
 
+.vaults .version a {
+  display: inline;
+  padding: 0;
+  color: inherit;
+  font-family: var(--font);
+  font-size: inherit;
+  text-decoration: underline;
+}
+
 .content {
   padding: 24px 28px 64px;
 }
