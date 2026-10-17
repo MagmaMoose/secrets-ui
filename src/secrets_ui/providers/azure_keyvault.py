@@ -37,7 +37,8 @@ _VERSION = re.compile(r"^[0-9a-f]{32}$")
 # shortcut: the public cloud's Log Analytics host only, add a setting when a sovereign cloud needs it.
 _LOGS = "https://api.loganalytics.azure.com"
 # AuditEvent lands in AzureDiagnostics or AZKVAuditLogs, as the diagnostic setting chose. Listing
-# is left out: every page view lists.
+# is left out: every page view lists. A workspace can type the _g columns as guid, and coalesce()
+# takes one type, so they are cast to string.
 _AUDIT_QUERY = """
 union isfuzzy=true
   (AzureDiagnostics
@@ -46,7 +47,8 @@ union isfuzzy=true
        CallerIp = column_ifexists("CallerIPAddress", ""),
        Caller = coalesce(column_ifexists("identity_claim_upn_s", ""),
          column_ifexists("identity_claim_http_schemas_xmlsoap_org_ws_2005_05_identity_claims_upn_s", ""),
-         column_ifexists("identity_claim_oid_g", ""), column_ifexists("identity_claim_appid_g", "")),
+         tostring(column_ifexists("identity_claim_oid_g", "")),
+         tostring(column_ifexists("identity_claim_appid_g", ""))),
        Target = coalesce(column_ifexists("id_s", ""), column_ifexists("requestUri_s", ""))),
   (AZKVAuditLogs
    | project TimeGenerated, OperationName, ResultSignature, CallerIp = CallerIpAddress,
