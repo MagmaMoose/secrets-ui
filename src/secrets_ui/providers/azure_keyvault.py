@@ -16,6 +16,7 @@ logs, caches or keeps it. Write responses carry the value back; they are read fo
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from datetime import UTC, datetime
@@ -34,8 +35,11 @@ _MAX_PAGES = 40  # 1000 secrets at Key Vault's 25 per page
 _VAULT_NAME = re.compile(r"^[a-z](?:[a-z0-9]|-(?!-))*[a-z0-9]$")
 _NAME_RULE = r"^[0-9a-zA-Z-]{1,127}$"
 _VERSION = re.compile(r"^[0-9a-f]{32}$")
-# shortcut: the public cloud's Log Analytics host only, add a setting when a sovereign cloud needs it.
+# shortcut: the public cloud's Log Analytics and Graph hosts only, add a setting when a sovereign cloud needs them.
 _LOGS = "https://api.loganalytics.azure.com"
+_PRINCIPALS = "https://graph.microsoft.com/v1.0/servicePrincipals"
+_GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+_MAX_NAMES = 50
 # AuditEvent lands in AzureDiagnostics or AZKVAuditLogs, as the diagnostic setting chose. Listing
 # is left out: every page view lists. A workspace can type the _g columns as guid, and coalesce()
 # takes one type, so they are cast to string.
@@ -146,6 +150,10 @@ class AzureKeyVault(Provider):
     @property
     def audit_scope(self) -> str:
         return "https://api.loganalytics.io/Data.Read"
+
+    @property
+    def names_scope(self) -> str:
+        return "https://graph.microsoft.com/Application.Read.All"
 
     def has_audit(self, store: str) -> bool:
         return store in self._resource_ids
@@ -299,11 +307,39 @@ class AzureKeyVault(Provider):
         self._check(name)
         await self._call("POST", self._url(store, "deletedsecrets", name, "recover"), token)
 
-    async def audit(self, store: str, token: str) -> list[dict[str, Any]]:
+    async def audit(self, store: str, token: str, names_token: str = "") -> list[dict[str, Any]]:
         if store not in self._resource_ids:
             raise ProviderError(400, "audit_not_configured", "No audit log is set up for this vault.")
         url = f"{_LOGS}/v1{self._resource_ids[store]}/query"
         body = await self._call("POST", url, token, json={"query": _AUDIT_QUERY, "timespan": "P30D"}, params={})
         tables = body.get("tables") or [{}]
         columns = [str(c.get("name")) for c in tables[0].get("columns") or []]
-        return [_event(dict(zip(columns, row, strict=False))) for row in tables[0].get("rows") or []]
+        events = [_event(dict(zip(columns, row, strict=False))) for row in tables[0].get("rows") or []]
+        if names_token:
+            # A user signs with their UPN; an app only with ids, so those get the service principal's name.
+            names = await self._principal_names({e["caller"] for e in events if _GUID.match(e["caller"])}, names_token)
+            for event in events:
+                if event["caller"] in names:
+                    event["caller_id"], event["caller"] = event["caller"], names[event["caller"]]
+        return events
+
+    async def _principal_names(self, ids: set[str], token: str) -> dict[str, str]:
+        """Service principal display names by object or application id. Best effort: an id Graph
+        will not name stays an id."""
+        limit = asyncio.Semaphore(8)
+
+        async def one(principal: str) -> tuple[str, str]:
+            async with limit:
+                for url in (f"{_PRINCIPALS}/{principal}", f"{_PRINCIPALS}(appId='{principal}')"):
+                    try:
+                        response = await self._http.get(url, params={"$select": "displayName"}, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+                        if response.status_code == 200:
+                            return principal, str(response.json().get("displayName") or "")
+                    except (httpx.HTTPError, ValueError, AttributeError):
+                        return principal, ""
+                    if response.status_code != 404:
+                        return principal, ""
+                return principal, ""
+
+        named = await asyncio.gather(*(one(p) for p in sorted(ids)[:_MAX_NAMES]))
+        return {principal: name for principal, name in named if name}

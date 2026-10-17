@@ -262,18 +262,32 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
                 raise HTTPException(401, "signed_out") from err
             raise
 
-    async def audit_token(data: dict[str, Any], found: Provider, *, fresh: bool = False) -> str:
-        key = f"{data['sid']}:{found.id}:audit"
+    async def delegated_token(data: dict[str, Any], scope: str, *, fresh: bool = False) -> str:
+        """An access token for `scope` redeemed from the session's refresh token, cached per scope."""
+        key = f"{data['sid']}:{scope}"
         token = None if fresh else tokens.get(key)
         if token is None:
-            try:
-                token, expires_at = await idp.refresh(str(data["rt"]), scope=found.audit_scope)
-            except SignInError as err:
-                _log("audit credential failed", user=data.get("oid"), provider=found.id, status=err.status, reason=str(err))
-                # Not a sign-out: without consent for the log API, the stores themselves still work.
-                raise ProviderError(403, "audit_unavailable", f"No access to the audit log. {err}") from err
+            token, expires_at = await idp.refresh(str(data["rt"]), scope=scope)
             tokens.put(key, token, expires_at)
         return token
+
+    async def audit_token(data: dict[str, Any], found: Provider, *, fresh: bool = False) -> str:
+        try:
+            return await delegated_token(data, found.audit_scope, fresh=fresh)
+        except SignInError as err:
+            _log("audit credential failed", user=data.get("oid"), provider=found.id, status=err.status, reason=str(err))
+            # Not a sign-out: without consent for the log API, the stores themselves still work.
+            raise ProviderError(403, "audit_unavailable", f"No access to the audit log. {err}") from err
+
+    async def names_token(data: dict[str, Any], found: Provider) -> str:
+        """Best effort: without consent for it, the audit log shows callers by id."""
+        if not found.names_scope:
+            return ""
+        try:
+            return await delegated_token(data, found.names_scope)
+        except SignInError as err:
+            _log("names credential failed", user=data.get("oid"), provider=found.id, status=err.status, reason=str(err))
+            return ""
 
     # ── Sign-in ───────────────────────────────────────────────────────────────────────
 
@@ -452,12 +466,13 @@ def create_app(cfg: Config, transport: httpx.AsyncBaseTransport | None = None) -
         found = provider_for(provider, store, data)
         if not found.has_audit(store):
             raise HTTPException(400, "audit_not_configured")
+        names = await names_token(data, found)
         try:
-            return {"events": await found.audit(store, await audit_token(data, found))}
+            return {"events": await found.audit(store, await audit_token(data, found), names)}
         except ProviderError as err:
             if err.status != 401:
                 raise
-        return {"events": await found.audit(store, await audit_token(data, found, fresh=True))}
+        return {"events": await found.audit(store, await audit_token(data, found, fresh=True), names)}
 
     @app.get(f"{base}/secrets/{{name:path}}/versions")
     async def list_versions(provider: ProviderId, store: StoreName, name: SecretName, data: Session) -> dict[str, Any]:
