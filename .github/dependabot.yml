@@ -21,9 +21,14 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # Transitive packages too, so a fix like certifi's lands without waiting on a security update.
+    allow:
+      - dependency-type: all
     groups:
       python:
         patterns: ["*"]
+        # uv-build has no locked version; grouped with lock-only bumps, Dependabot skips the group.
+        exclude-patterns: ["uv-build"]
   - package-ecosystem: npm
     directory: "/frontend"
     schedule:
